@@ -89,6 +89,9 @@ def ask_gemini(prompt: str) -> str:
 
         logging.debug("Executing Gemini script...")
 
+        # Properly escape the prompt for JavaScript
+        escaped_prompt = json.dumps(prompt)
+
         result = driver.execute_async_script(f"""
             const callback = arguments[0];
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -131,8 +134,9 @@ def ask_gemini(prompt: str) -> str:
                         return;
                     }}
 
+                    const promptText = {escaped_prompt};
                     input.focus();
-                    document.execCommand('insertText', false, `{prompt}`);
+                    document.execCommand('insertText', false, promptText);
 
                     await sleep(500);
 
