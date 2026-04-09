@@ -1,147 +1,143 @@
 import asyncio
 import json
 import logging
-import socket
-import subprocess
 import sys
 import time
+from pathlib import Path
+from datetime import datetime
+
 from selenium import webdriver
 from selenium.webdriver.edge.options import Options
 from selenium.webdriver.edge.service import Service
 
 # ---------------- CONFIG ----------------
-EDGE_PATH = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-DEBUG_PORT = 9222
-USER_DATA_DIR = r"D:\edge-debug-profile"
 GEMINI_URL = "https://gemini.google.com/app"
+
+BASE_DIR = Path.home() / "web-proxy"
+USER_DATA_DIR = BASE_DIR / "edge-debug-profile"
+LOG_FILE = BASE_DIR / "mcp.log"
+
+BASE_DIR.mkdir(parents=True, exist_ok=True)
+USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------- LOGGING ----------------
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # 🔥 FULL DEBUG
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stderr),  # MCP safe
-        logging.FileHandler("D:\web-chat\web-screper\mcp.log", encoding="utf-8")  # 👈 ADD THIS
+        logging.FileHandler(LOG_FILE, encoding="utf-8")
     ]
 )
 
-driver = None
-
-
-# ---------------- WAIT FOR DEBUG PORT ----------------
-def wait_for_debug_port(port, timeout=15):
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=1):
-                return True
-        except:
-            time.sleep(0.5)
-    return False
-
-
-# ---------------- INIT BROWSER ----------------
-def init_browser():
-    global driver
-
-    if driver:
-        logging.info("Browser already initialized.")
-        return
-
+def log_json(prefix, data):
     try:
-        logging.info("Launching Edge with Gemini...")
+        logging.debug(f"{prefix}: {json.dumps(data, indent=2)}")
+    except:
+        logging.debug(f"{prefix}: {data}")
 
-        subprocess.Popen([
-            EDGE_PATH,
-            f"--remote-debugging-port={DEBUG_PORT}",
-            f"--user-data-dir={USER_DATA_DIR}",
-            GEMINI_URL
-        ])
+# ---------------- DRIVER PATH ----------------
+def get_webdriver_path():
+    cache = Path.home() / ".cache/selenium"
 
-        if not wait_for_debug_port(DEBUG_PORT):
-            raise Exception("Edge debug port not ready")
+    for p in cache.rglob("msedgedriver.exe"):
+        logging.debug(f"Found WebDriver: {p}")
+        return str(p)
 
-        logging.info("Connecting Selenium to Edge...")
+    logging.info("WebDriver not found. Downloading via Selenium Manager...")
+    tmp = webdriver.Edge()
+    tmp.quit()
 
-        # 1. Setup Options for Debugging
-        edge_options = Options()
-        edge_options.add_experimental_option(
-            "debuggerAddress", f"127.0.0.1:{DEBUG_PORT}"
-        )
+    for p in cache.rglob("msedgedriver.exe"):
+        logging.debug(f"Downloaded WebDriver: {p}")
+        return str(p)
 
-        # 2. Setup the Service object (Correct way for Selenium 4)
-        edge_driver_path = r"D:\web-chat\web-screper\msedgedriver.exe"
-        service = Service(executable_path=edge_driver_path)
-
-        # 3. Initialize driver with the service object
-        # NOTE: Removed executable_path from here
-        driver = webdriver.Edge(service=service, options=edge_options)
-
-        # Attach to first tab
-        handles = driver.window_handles
-        if not handles:
-            raise Exception("No browser tabs found")
-
-        driver.switch_to.window(handles[0])
-
-        logging.info(f"Connected to: {driver.current_url}")
-        time.sleep(5)
-
-    except Exception as e:
-        logging.error(f"Browser init failed: {e}")
-        driver = None
-        raise
-
+    raise Exception("WebDriver not found")
 
 # ---------------- GEMINI TOOL ----------------
 def ask_gemini(prompt: str) -> str:
-    global driver
+    driver = None
 
     try:
-        if not driver:
-            init_browser()
-
+        logging.info("=== NEW GEMINI REQUEST ===")
         logging.info(f"Prompt: {prompt}")
+
+        options = Options()
+
+        # 🔥 Persist login
+        options.add_argument(f"--user-data-dir={USER_DATA_DIR}")
+
+        # 🔥 Force separate instance
+        options.add_argument("--new-window")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+
+        # stability
+        options.add_argument("--disable-notifications")
+        options.add_argument("--disable-popup-blocking")
+
+        service = Service(get_webdriver_path())
+
+        logging.debug("Launching Edge WebDriver...")
+        driver = webdriver.Edge(service=service, options=options)
+        driver.set_script_timeout(120)
+
+        logging.debug(f"Opening URL: {GEMINI_URL}")
+        driver.get(GEMINI_URL)
+
+        time.sleep(5)
+
+        logging.debug("Executing Gemini script...")
 
         result = driver.execute_async_script(f"""
             const callback = arguments[0];
-
             const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
             try {{
-                const actionsBefore = document.querySelectorAll('message-actions').length;
+                let finished = false;
 
                 let interval = setInterval(() => {{
                     try {{
-                        if (document.querySelectorAll('message-actions').length > actionsBefore) {{
-                            const msgs = document.querySelectorAll('message-content');
-                            const response = msgs[msgs.length - 1].innerText;
+                        const msgs = document.querySelectorAll('message-content');
+                        if (msgs.length > 0) {{
+                            const last = msgs[msgs.length - 1].innerText;
 
-                            clearInterval(interval);
-                            callback(response);
+                            if (last && last.length > 20) {{
+                                finished = true;
+                                clearInterval(interval);
+                                callback(last);
+                            }}
                         }}
-                    }} catch (err) {{
+                    }} catch (e) {{
+                        finished = true;
                         clearInterval(interval);
-                        callback("JS ERROR: " + err.message);
+                        callback("JS ERROR: " + e.message);
                     }}
-                }}, 2000);
+                }}, 1500);
+
+                setTimeout(() => {{
+                    if (!finished) {{
+                        finished = true;
+                        clearInterval(interval);
+                        callback("ERROR: Timeout waiting response");
+                    }}
+                }}, 60000);
 
                 async function run() {{
                     const input = document.querySelector('[data-placeholder="Ask Gemini"]');
 
                     if (!input) {{
-                        callback("ERROR: Input not found");
+                        callback("ERROR: input not found");
                         return;
                     }}
 
                     input.focus();
                     document.execCommand('insertText', false, `{prompt}`);
 
-                    await sleep(1000);
+                    await sleep(500);
 
                     input.dispatchEvent(new KeyboardEvent('keydown', {{
                         key: 'Enter',
-                        code: 'Enter',
                         bubbles: true
                     }}));
                 }}
@@ -149,147 +145,166 @@ def ask_gemini(prompt: str) -> str:
                 run();
 
             }} catch (err) {{
-                callback("JS FATAL ERROR: " + err.message);
+                callback("FATAL: " + err.message);
             }}
         """)
 
-        logging.info("Response received.")
+        logging.info("Response received from Gemini")
         return result
 
     except Exception as e:
-        logging.error(f"ask_gemini failed: {e}")
+        logging.error(f"ask_gemini FAILED: {e}", exc_info=True)
         return f"ERROR: {str(e)}"
 
+    finally:
+        if driver:
+            try:
+                logging.debug("Closing WebDriver...")
+                driver.quit()
+            except Exception as e:
+                logging.error(f"Error closing driver: {e}")
+
+        logging.info("=== REQUEST COMPLETE ===")
 
 # ---------------- MCP SERVER ----------------
 async def mcp_server():
-    global driver
+    logging.info("MCP server started")
 
-    # Optional: Warm up the browser before entering the loop to prevent initial timeouts
-    try:
-        init_browser()
-    except Exception as e:
-        logging.error(f"Initial browser warm-up failed: {e}")
+    while True:
+        line = await asyncio.to_thread(sys.stdin.readline)
 
-    try:
-        while True:
-            # Read from standard input
-            line = await asyncio.to_thread(sys.stdin.readline)
+        if not line:
+            logging.info("STDIN closed. Shutting down.")
+            break
 
-            if not line:
-                logging.info("STDIN closed. Exiting...")
-                break
+        logging.debug(f"RAW INPUT: {line.strip()}")
 
-            try:
-                req = json.loads(line)
-                req_id = req.get("id")
-                method = req.get("method")
+        try:
+            req = json.loads(line)
+            log_json("REQUEST", req)
 
-                # Default response structure
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": req_id
+            req_id = req.get("id")
+            method = req.get("method")
+
+            response = {
+                "jsonrpc": "2.0",
+                "id": req_id
+            }
+
+            # ---------------- INITIALIZE ----------------
+            if method == "initialize":
+                response["result"] = {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {},
+                        "resources": {},
+                        "prompts": {}
+                    },
+                    "serverInfo": {
+                        "name": "gemini-browser-bridge",
+                        "version": "5.1.0"
+                    }
                 }
 
-                # 1. Handle Protocol Initialization
-                if method == "initialize":
-                    response["result"] = {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {
-                            "tools": {}
-                        },
-                        "serverInfo": {
-                            "name": "gemini-browser-bridge",
-                            "version": "1.0.0"
+            # ---------------- TOOLS ----------------
+            elif method == "tools/list":
+                response["result"] = {
+                    "tools": [
+                        {
+                            "name": "ask_gemini",
+                            "description": "Send a prompt to Gemini via Edge browser automation",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "prompt": {
+                                        "type": "string",
+                                        "description": "Prompt to send to Gemini"
+                                    }
+                                },
+                                "required": ["prompt"]
+                            }
                         }
-                    }
+                    ]
+                }
 
-                # 2. List available tools
-                elif method == "tools/list":
+            # ---------------- RESOURCES (EMPTY) ----------------
+            elif method == "resources/list":
+                response["result"] = {
+                    "resources": []
+                }
+
+            elif method == "resources/templates/list":
+                response["result"] = {
+                    "resourceTemplates": []
+                }
+
+            # ---------------- PROMPTS (EMPTY) ----------------
+            elif method == "prompts/list":
+                response["result"] = {
+                    "prompts": []
+                }
+
+            # ---------------- TOOL CALL ----------------
+            elif method == "tools/call":
+                params = req.get("params", {})
+                tool_name = params.get("name")
+                arguments = params.get("arguments", {})
+
+                logging.debug(f"Tool call: {tool_name}")
+                log_json("ARGS", arguments)
+
+                if tool_name == "ask_gemini":
+                    prompt = arguments.get("prompt", "")
+                    output = ask_gemini(prompt)
+
                     response["result"] = {
-                        "tools": [
+                        "content": [
                             {
-                                "name": "ask_gemini",
-                                "description": "Send a prompt to Gemini via the automated Edge browser",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "prompt": {"type": "string"}
-                                    },
-                                    "required": ["prompt"]
-                                }
+                                "type": "text",
+                                "text": output
                             }
                         ]
                     }
-
-                # 3. Execute tool calls
-                elif method == "tools/call":
-                    params = req.get("params", {})
-                    tool_name = params.get("name")
-                    arguments = params.get("arguments", {})
-
-                    if tool_name == "ask_gemini":
-                        prompt_text = arguments.get("prompt")
-                        # Call your automation function
-                        output = ask_gemini(prompt_text)
-
-                        response["result"] = {
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": str(output)
-                                }
-                            ]
-                        }
-                    else:
-                        response["error"] = {
-                            "code": -32601,
-                            "message": f"Tool not found: {tool_name}"
-                        }
-
-                # 4. Handle notifications (which have no ID)
-                elif req_id is None:
-                    continue
-
-                    # 5. Unknown methods
                 else:
                     response["error"] = {
                         "code": -32601,
-                        "message": f"Method not found: {method}"
+                        "message": f"Tool not found: {tool_name}"
                     }
 
-                # Send the response back to the host
-                sys.stdout.write(json.dumps(response) + "\n")
-                sys.stdout.flush()
+            # ---------------- NOTIFICATIONS ----------------
+            elif req_id is None:
+                continue
 
-            except json.JSONDecodeError:
-                logging.error("Received invalid JSON")
-            except Exception as e:
-                logging.error(f"Error processing request: {e}")
-                # Ensure we still send a valid JSON-RPC error if possible
-                error_res = {
-                    "jsonrpc": "2.0",
-                    "id": req.get("id") if 'req' in locals() else None,
-                    "error": {"code": -32603, "message": str(e)}
+            # ---------------- UNKNOWN ----------------
+            else:
+                # 🔥 DO NOT ERROR → return empty result
+                response["result"] = {}
+
+            log_json("RESPONSE", response)
+
+            sys.stdout.write(json.dumps(response) + "\n")
+            sys.stdout.flush()
+
+        except Exception as e:
+            logging.error(f"MCP ERROR: {e}", exc_info=True)
+
+            err = {
+                "jsonrpc": "2.0",
+                "id": req.get("id") if 'req' in locals() else None,
+                "error": {
+                    "code": -32603,
+                    "message": str(e)
                 }
-                sys.stdout.write(json.dumps(error_res) + "\n")
-                sys.stdout.flush()
+            }
 
-    except Exception as e:
-        logging.error(f"MCP server loop crashed: {e}")
-    finally:
-        logging.info("Shutting down MCP server...")
-        if driver:
-            try:
-                driver.quit()
-            except:
-                pass
+            sys.stdout.write(json.dumps(err) + "\n")
+            sys.stdout.flush()
 
 # ---------------- ENTRY ----------------
 if __name__ == "__main__":
     try:
         asyncio.run(mcp_server())
     except Exception as e:
-        logging.error(f"Fatal error: {e}")
+        logging.critical(f"FATAL ERROR: {e}", exc_info=True)
         print(json.dumps({"error": str(e)}))
         sys.stdout.flush()
