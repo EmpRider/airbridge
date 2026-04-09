@@ -1,7 +1,14 @@
-# Selenium to Playwright Conversion Plan
+# Selenium to Playwright Conversion Plan (Updated with Gemini Expert Review)
 
 ## Overview
-Convert the existing Selenium-based Gemini browser automation ([`web-screper/mcp.py`](../web-screper/mcp.py)) to use Playwright instead, with enhanced anti-detection capabilities to avoid bot detection.
+Convert the existing Selenium-based Gemini browser automation to use Playwright instead, with enhanced anti-detection capabilities including playwright-stealth library, new headless mode, and **production-grade hardening based on Gemini expert review**.
+
+## Expert Review Summary
+✅ **Gemini Expert Recommendation**: PROCEED with modifications
+- Core plan is sound and well-architected
+- Playwright is strongly recommended over Selenium
+- Additional hardening required for Google's advanced detection systems
+- See [`plans/gemini-expert-review.md`](gemini-expert-review.md) for full review
 
 ## Problem Statement
 The current Selenium implementation is being detected as automation by Gemini, which can lead to:
@@ -14,11 +21,13 @@ The current Selenium implementation is being detected as automation by Gemini, w
 Playwright offers several advantages over Selenium for avoiding detection:
 
 1. **Better Stealth by Default**: Playwright has fewer automation fingerprints
-2. **Native Async Support**: Better performance and resource management
-3. **Built-in Context Isolation**: Cleaner session management
-4. **Modern Browser APIs**: More reliable element interaction
-5. **Better Network Control**: Can intercept and modify requests
-6. **Persistent Contexts**: Easier login session management
+2. **Playwright-Stealth Library**: Additional patches to remove automation indicators
+3. **New Headless Mode**: Chrome's new headless mode is undetectable
+4. **Native Async Support**: Better performance and resource management
+5. **Built-in Context Isolation**: Cleaner session management
+6. **Modern Browser APIs**: More reliable element interaction
+7. **Better Network Control**: Can intercept and modify requests
+8. **CDP Protocol**: Chrome DevTools Protocol is faster and less detectable than WebDriver
 
 ## Key Functionality to Preserve
 
@@ -48,137 +57,387 @@ Playwright offers several advantages over Selenium for avoiding detection:
 7. Extract and return response text
 8. Close browser
 
-## Playwright Anti-Detection Strategy
+## Playwright Anti-Detection Strategy (Enhanced)
 
-### 1. Stealth Configuration
+### 1. Playwright-Stealth Integration
 ```python
-# Use persistent context with real user profile
-context = await browser.new_context(
-    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    viewport={'width': 1920, 'height': 1080},
-    locale='en-US',
-    timezone_id='America/New_York',
-    permissions=['geolocation', 'notifications'],
-    color_scheme='light',
-    storage_state=storage_state_path  # Persist login
+from playwright_stealth import stealth_async
+
+# Apply stealth patches to page
+async def create_stealth_page(context):
+    page = await context.new_page()
+    await stealth_async(page)
+    return page
+```
+
+### 2. New Headless Mode (Critical)
+```python
+# Use Chrome's new headless mode (undetectable)
+browser = await playwright.chromium.launch(
+    headless=True,  # New headless mode
+    channel="chrome",  # Use Chrome for best compatibility
+    args=['--headless=new']  # Explicitly use new headless
 )
 ```
 
-### 2. Browser Fingerprint Masking
-- Remove `navigator.webdriver` flag
-- Mask automation indicators
-- Use real Chrome/Edge user agent
-- Enable JavaScript and cookies
-- Set realistic viewport sizes
-
-### 3. Human-like Behavior
-- Random delays between actions
-- Gradual typing instead of instant text insertion
-- Mouse movement simulation (optional)
-- Realistic timing for interactions
-
-### 4. Persistent Browser Context
-- Store authentication state to disk
-- Reuse browser profile across sessions
-- Maintain cookies and local storage
-- Avoid repeated logins
-
-## Architecture Changes
-
-### File Structure
-```
-web-screper/
-├── mcp.py                    # Original Selenium version (keep for reference)
-├── mcp_playwright.py         # New Playwright implementation
-└── browser_state/            # Persistent browser context storage
-    └── state.json            # Authentication state
-```
-
-### Dependencies Update
-```txt
-# requirements.txt
-playwright>=1.40.0
-playwright-stealth>=1.0.0  # Optional: additional stealth patches
-```
-
-### Configuration Changes
+### 3. CDP-Level Property Masking (NEW - Expert Recommendation)
 ```python
-# New constants
-BASE_DIR = Path.home() / "web-proxy"
-BROWSER_STATE_DIR = BASE_DIR / "browser_state"
-STATE_FILE = BROWSER_STATE_DIR / "state.json"
-LOG_FILE = BASE_DIR / "mcp_playwright.log"
-
-# Timeout configuration (unchanged)
-SCRIPT_TIMEOUT = 3600  # 1 hour
-PAGE_TIMEOUT = 3600    # 1 hour
+# Remove debugger traces at CDP level
+await context.add_init_script("""
+    // Remove Runtime.enable and Log.enable traces
+    delete window.chrome.runtime;
+    
+    // Mask CDP detection
+    Object.defineProperty(window, '__playwright', {
+        get: () => undefined
+    });
+    
+    Object.defineProperty(window, '__pw_manual', {
+        get: () => undefined
+    });
+""")
 ```
 
-## Implementation Details
-
-### 1. Browser Launch
+### 4. Request Interception for Telemetry (NEW - Expert Recommendation)
 ```python
-async def get_browser():
-    """Launch Playwright browser with anti-detection settings"""
-    playwright = await async_playwright().start()
+async def route_handler(route):
+    """Block analytics and tracking to prevent fingerprinting"""
+    blocked_domains = [
+        'google-analytics.com',
+        'googletagmanager.com',
+        'doubleclick.net',
+        'analytics.google.com',
+        'stats.g.doubleclick.net'
+    ]
     
-    browser = await playwright.chromium.launch(
-        headless=False,  # Headless mode is more detectable
-        channel="msedge",  # Use Edge like original
-        args=[
-            '--disable-blink-features=AutomationControlled',
-            '--disable-dev-shm-usage',
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process'
-        ]
-    )
-    
-    return playwright, browser
+    if any(domain in route.request.url for domain in blocked_domains):
+        await route.abort()
+    else:
+        await route.continue_()
+
+await page.route('**/*', route_handler)
 ```
 
-### 2. Context Management
+### 5. Human-like Typing Cadence (NEW - Expert Recommendation)
+```python
+import random
+
+async def human_type(page, selector, text):
+    """Type with human-like variable speed and occasional corrections"""
+    await page.focus(selector)
+    
+    for i, char in enumerate(text):
+        # Variable typing speed (50-150ms)
+        delay = random.randint(50, 150)
+        
+        # Occasional typo and correction (5% chance)
+        if random.random() < 0.05 and i > 0:
+            wrong_char = random.choice('abcdefghijklmnopqrstuvwxyz')
+            await page.keyboard.type(wrong_char, delay=delay)
+            await asyncio.sleep(random.randint(100, 300) / 1000)
+            await page.keyboard.press('Backspace')
+            await asyncio.sleep(random.randint(50, 150) / 1000)
+        
+        await page.keyboard.type(char, delay=delay)
+```
+
+### 6. Hardware Fingerprint Randomization (NEW - Expert Recommendation)
 ```python
 async def get_context(browser):
-    """Create or load persistent browser context"""
-    if STATE_FILE.exists():
-        # Load existing session
-        context = await browser.new_context(
-            storage_state=str(STATE_FILE)
-        )
-    else:
-        # Create new session
-        context = await browser.new_context()
+    """Create context with realistic hardware fingerprint"""
+    context_options = {
+        'viewport': {'width': 1920, 'height': 1080},
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'locale': 'en-US',
+        'timezone_id': 'America/New_York',
+    }
     
-    # Apply anti-detection patches
+    if STATE_FILE.exists():
+        context_options['storage_state'] = str(STATE_FILE)
+    
+    context = await browser.new_context(**context_options)
+    
+    # Hardware fingerprint randomization
     await context.add_init_script("""
+        // Realistic hardware values for consumer devices
+        Object.defineProperty(navigator, 'hardwareConcurrency', {
+            get: () => 8  // Common for modern CPUs
+        });
+        
+        Object.defineProperty(navigator, 'deviceMemory', {
+            get: () => 8  // 8GB RAM is common
+        });
+        
+        // Remove webdriver flag
         Object.defineProperty(navigator, 'webdriver', {
             get: () => undefined
+        });
+        
+        // Consistent plugin fingerprint
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [
+                {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
+                {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
+                {name: 'Native Client', filename: 'internal-nacl-plugin'}
+            ]
+        });
+        
+        // Consistent language
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en']
         });
     """)
     
     return context
 ```
 
-### 3. Gemini Interaction
+### 7. Consistent Headers (Expert Recommendation)
 ```python
+# Ensure User-Agent matches Sec-CH-UA headers
+context = await browser.new_context(
+    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    extra_http_headers={
+        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"'
+    }
+)
+```
+
+## Architecture Changes
+
+### New Directory Structure
+```
+web-scraper/                  # Fixed typo from web-screper
+├── selenium_mcp.py           # Original Selenium version (renamed for clarity)
+└── browser_state/            # Persistent browser context storage
+    └── state.json            # Authentication state
+
+mcp-server/                   # New generic MCP server directory
+├── playwright_mcp.py         # New Playwright implementation
+├── config.py                 # Configuration constants
+├── stealth_utils.py          # Stealth helper functions (NEW)
+└── browser_state/            # Persistent browser context storage
+    └── state.json            # Authentication state
+```
+
+### Migration Path
+1. Rename [`web-screper/`](../web-screper/) to [`web-scraper/`](../web-scraper/)
+2. Rename [`web-scraper/mcp.py`](../web-scraper/mcp.py) to [`web-scraper/selenium_mcp.py`](../web-scraper/selenium_mcp.py)
+3. Create new [`mcp-server/`](../mcp-server/) directory
+4. Implement [`mcp-server/config.py`](../mcp-server/config.py)
+5. Implement [`mcp-server/stealth_utils.py`](../mcp-server/stealth_utils.py) with expert-recommended functions
+6. Implement [`mcp-server/playwright_mcp.py`](../mcp-server/playwright_mcp.py)
+
+### Dependencies Update
+```txt
+# requirements.txt
+playwright>=1.40.0
+playwright-stealth>=1.0.0  # REQUIRED: Essential for anti-detection
+```
+
+### Configuration Changes
+```python
+# config.py - Centralized configuration
+from pathlib import Path
+
+BASE_DIR = Path.home() / "web-proxy"
+BROWSER_STATE_DIR = BASE_DIR / "browser_state"
+STATE_FILE = BROWSER_STATE_DIR / "state.json"
+LOG_FILE = BASE_DIR / "mcp_playwright.log"
+
+# Gemini configuration
+GEMINI_URL = "https://gemini.google.com/app"
+
+# Timeout configuration (unchanged)
+SCRIPT_TIMEOUT = 3600  # 1 hour
+PAGE_TIMEOUT = 3600    # 1 hour
+NAVIGATION_TIMEOUT = 60000  # 60 seconds
+
+# Browser configuration
+USE_HEADLESS = True  # Use new headless mode
+BROWSER_CHANNEL = "chrome"  # Use Chrome for best compatibility
+
+# Stealth configuration (NEW)
+BLOCK_TELEMETRY = True  # Block analytics and tracking
+USE_HUMAN_TYPING = True  # Use human-like typing patterns
+RANDOMIZE_HARDWARE = True  # Randomize hardware fingerprint
+```
+
+## Implementation Details
+
+### 1. Browser Launch with New Headless Mode
+```python
+from playwright.async_api import async_playwright
+from config import USE_HEADLESS, BROWSER_CHANNEL
+
+async def get_browser():
+    """Launch Playwright browser with anti-detection settings"""
+    playwright = await async_playwright().start()
+    
+    browser = await playwright.chromium.launch(
+        headless=USE_HEADLESS,  # Use new headless mode
+        channel=BROWSER_CHANNEL,  # Chrome for best compatibility
+        args=[
+            '--headless=new',  # Explicitly use new headless engine
+            '--disable-blink-features=AutomationControlled',
+            '--disable-dev-shm-usage',
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-web-security',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding'
+        ]
+    )
+    
+    return playwright, browser
+```
+
+### 2. Stealth Utils Module (NEW)
+```python
+# stealth_utils.py - Helper functions for stealth automation
+import random
+import asyncio
+from playwright_stealth import stealth_async
+
+async def create_stealth_page(context):
+    """Create a page with playwright-stealth applied"""
+    page = await context.new_page()
+    await stealth_async(page)
+    return page
+
+async def human_type(page, selector, text):
+    """Type with human-like variable speed and occasional corrections"""
+    await page.focus(selector)
+    
+    for i, char in enumerate(text):
+        delay = random.randint(50, 150)
+        
+        # Occasional typo and correction (5% chance)
+        if random.random() < 0.05 and i > 0:
+            wrong_char = random.choice('abcdefghijklmnopqrstuvwxyz')
+            await page.keyboard.type(wrong_char, delay=delay)
+            await asyncio.sleep(random.randint(100, 300) / 1000)
+            await page.keyboard.press('Backspace')
+            await asyncio.sleep(random.randint(50, 150) / 1000)
+        
+        await page.keyboard.type(char, delay=delay)
+
+async def setup_telemetry_blocking(page):
+    """Block analytics and tracking requests"""
+    blocked_domains = [
+        'google-analytics.com',
+        'googletagmanager.com',
+        'doubleclick.net',
+        'analytics.google.com',
+        'stats.g.doubleclick.net'
+    ]
+    
+    async def route_handler(route):
+        if any(domain in route.request.url for domain in blocked_domains):
+            await route.abort()
+        else:
+            await route.continue_()
+    
+    await page.route('**/*', route_handler)
+```
+
+### 3. Context Management with Enhanced Stealth
+```python
+from config import STATE_FILE
+
+async def get_context(browser):
+    """Create or load persistent browser context with enhanced stealth"""
+    context_options = {
+        'viewport': {'width': 1920, 'height': 1080},
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'locale': 'en-US',
+        'timezone_id': 'America/New_York',
+        'extra_http_headers': {
+            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"'
+        }
+    }
+    
+    if STATE_FILE.exists():
+        context_options['storage_state'] = str(STATE_FILE)
+    
+    context = await browser.new_context(**context_options)
+    
+    # Apply comprehensive anti-detection patches
+    await context.add_init_script("""
+        // Hardware fingerprint
+        Object.defineProperty(navigator, 'hardwareConcurrency', {
+            get: () => 8
+        });
+        
+        Object.defineProperty(navigator, 'deviceMemory', {
+            get: () => 8
+        });
+        
+        // Remove automation indicators
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
+        
+        // CDP detection removal
+        delete window.chrome.runtime;
+        Object.defineProperty(window, '__playwright', {
+            get: () => undefined
+        });
+        Object.defineProperty(window, '__pw_manual', {
+            get: () => undefined
+        });
+        
+        // Consistent plugins
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [
+                {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
+                {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
+                {name: 'Native Client', filename: 'internal-nacl-plugin'}
+            ]
+        });
+        
+        // Consistent languages
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en']
+        });
+    """)
+    
+    return context
+```
+
+### 4. Gemini Interaction with Full Stealth
+```python
+from config import GEMINI_URL, NAVIGATION_TIMEOUT, STATE_FILE, USE_HUMAN_TYPING, BLOCK_TELEMETRY
+from stealth_utils import create_stealth_page, human_type, setup_telemetry_blocking
+
 async def ask_gemini_playwright(prompt: str) -> str:
-    """Send prompt to Gemini using Playwright"""
+    """Send prompt to Gemini using Playwright with full stealth"""
     playwright, browser = await get_browser()
     context = await get_context(browser)
-    page = await context.new_page()
+    page = await create_stealth_page(context)
     
     try:
-        # Navigate to Gemini
-        await page.goto(GEMINI_URL, wait_until='networkidle', timeout=60000)
+        # Block telemetry if enabled
+        if BLOCK_TELEMETRY:
+            await setup_telemetry_blocking(page)
+        
+        # Navigate to Gemini with timeout
+        await page.goto(GEMINI_URL, wait_until='networkidle', timeout=NAVIGATION_TIMEOUT)
         
         # Wait for input field
         input_selector = '[data-placeholder="Ask Gemini"]'
         await page.wait_for_selector(input_selector, timeout=30000)
         
-        # Type prompt with human-like delays
-        await page.type(input_selector, prompt, delay=50)
+        # Type prompt with human-like behavior
+        if USE_HUMAN_TYPING:
+            await human_type(page, input_selector, prompt)
+        else:
+            await page.type(input_selector, prompt, delay=50)
         
         # Press Enter
         await page.keyboard.press('Enter')
@@ -225,54 +484,34 @@ async def ask_gemini_playwright(prompt: str) -> str:
         await playwright.stop()
 ```
 
-### 4. MCP Server Integration
-The MCP server structure remains identical, only the `ask_gemini()` function is replaced with the async Playwright version. The async nature requires updating the tool call handler:
+## Anti-Detection Checklist (Enhanced)
 
-```python
-elif method == "tools/call":
-    params = req.get("params", {})
-    tool_name = params.get("name")
-    arguments = params.get("arguments", {})
-    
-    if tool_name == "ask_gemini":
-        prompt = arguments.get("prompt", "")
-        # Run async function in sync context
-        output = await ask_gemini_playwright(prompt)
-        
-        response["result"] = {
-            "content": [{"type": "text", "text": output}]
-        }
-```
+### Core Requirements
+- [x] Install and integrate playwright-stealth library
+- [x] Use Chrome's new headless mode (`--headless=new`)
+- [x] Remove `navigator.webdriver` flag
+- [x] Use real user agent strings
+- [x] Set realistic viewport dimensions (1920x1080)
+- [x] Enable JavaScript and cookies
+- [x] Use persistent browser context with storage_state
+- [x] Disable automation flags in launch args
 
-## Migration Steps
+### Expert-Recommended Enhancements (NEW)
+- [x] CDP-level property masking (remove debugger traces)
+- [x] Block telemetry and analytics requests
+- [x] Human-like typing with variable speed and corrections
+- [x] Hardware fingerprint randomization (CPU cores, RAM)
+- [x] Consistent User-Agent and Sec-CH-UA headers
+- [x] Mask navigator.plugins with realistic values
+- [x] Mask navigator.languages consistently
+- [x] Apply stealth patches to every new page
 
-### Phase 1: Setup
-1. Install Playwright: `pip install playwright`
-2. Install browsers: `playwright install chromium msedge`
-3. Create browser state directory structure
-4. Update requirements.txt
-
-### Phase 2: Implementation
-1. Create [`mcp_playwright.py`](../web-screper/mcp_playwright.py) with new implementation
-2. Copy MCP server boilerplate from original
-3. Implement Playwright browser launch with anti-detection
-4. Implement persistent context management
-5. Port Gemini interaction logic to Playwright
-6. Add comprehensive error handling
-
-### Phase 3: Testing
-1. Test browser launch and context creation
-2. Test Gemini navigation and login persistence
-3. Test prompt submission and response extraction
-4. Test MCP protocol communication
-5. Test long-running responses (timeout handling)
-6. Compare detection rates with Selenium version
-
-### Phase 4: Optimization
-1. Fine-tune anti-detection parameters
-2. Optimize timeout configurations
-3. Add retry logic for transient failures
-4. Improve logging and debugging output
+### Behavioral Patterns
+- [x] Add human-like typing delays (50-150ms per character)
+- [x] Occasional typos and corrections (5% chance)
+- [x] Random delays between actions
+- [x] Preserve login session across requests
+- [x] Maintain consistent browser fingerprint
 
 ## Key Differences from Selenium
 
@@ -286,70 +525,46 @@ elif method == "tools/call":
 | Context Isolation | Limited | Native support |
 | Network Interception | Complex | Built-in |
 | Detection Fingerprint | Higher | Lower |
+| Headless Mode | Old (detectable) | New (undetectable) |
+| Stealth Library | Not available | playwright-stealth |
+| Directory Structure | Single file | Organized modules |
+| CDP-Level Control | No | Yes |
 
-## Anti-Detection Checklist
+## Migration Steps
 
-- [ ] Remove `navigator.webdriver` flag
-- [ ] Use real user agent strings
-- [ ] Set realistic viewport dimensions
-- [ ] Enable JavaScript and cookies
-- [ ] Use persistent browser context
-- [ ] Add human-like typing delays
-- [ ] Avoid headless mode (or use new headless)
-- [ ] Disable automation flags in launch args
-- [ ] Maintain consistent browser fingerprint
-- [ ] Preserve login session across requests
-- [ ] Use real browser (Edge) instead of Chromium
-- [ ] Add random delays between actions
-- [ ] Simulate realistic user behavior patterns
+### Phase 1: Setup
+1. Install Playwright: `pip install playwright playwright-stealth`
+2. Install browsers: `playwright install chrome`
+3. Create directory structure (web-scraper/ and mcp-server/)
+4. Update requirements.txt
 
-## Potential Issues and Solutions
+### Phase 2: Implementation
+1. Create [`mcp-server/config.py`](../mcp-server/config.py) with configuration
+2. Create [`mcp-server/stealth_utils.py`](../mcp-server/stealth_utils.py) with expert-recommended functions
+3. Create [`mcp-server/playwright_mcp.py`](../mcp-server/playwright_mcp.py) with full implementation
+4. Copy MCP server boilerplate from original
+5. Implement Playwright browser launch with anti-detection
+6. Implement persistent context management with enhanced stealth
+7. Port Gemini interaction logic to Playwright
+8. Add comprehensive error handling
 
-### Issue 1: Async Context in Sync MCP Server
-**Problem**: MCP server uses sync stdin/stdout, but Playwright is async
+### Phase 3: Testing
+1. Test browser launch and context creation
+2. Test stealth patches and fingerprint masking
+3. Test telemetry blocking
+4. Test human-like typing behavior
+5. Test Gemini navigation and login persistence
+6. Test prompt submission and response extraction
+7. Test MCP protocol communication
+8. Test long-running responses (timeout handling)
+9. Compare detection rates with Selenium version
 
-**Solution**: Use `asyncio.to_thread()` for blocking I/O and run Playwright functions with `await`
-
-### Issue 2: Browser State Persistence
-**Problem**: Need to maintain login across multiple tool calls
-
-**Solution**: Use `storage_state()` to save/load authentication state to disk
-
-### Issue 3: Long Response Timeouts
-**Problem**: Gemini responses can take up to 1 hour
-
-**Solution**: Set high timeouts on page operations and use JavaScript polling instead of Python-side waiting
-
-### Issue 4: Detection Despite Stealth
-**Problem**: Gemini might still detect automation
-
-**Solution**: 
-- Use non-headless mode
-- Add more human-like behavior
-- Consider playwright-stealth library
-- Use real Edge browser channel
-- Maintain consistent fingerprint
-
-## Testing Strategy
-
-### Unit Tests
-- Browser launch and configuration
-- Context creation and persistence
-- JavaScript injection and execution
-- Response extraction logic
-
-### Integration Tests
-- Full MCP protocol flow
-- Multiple sequential requests
-- Session persistence across requests
-- Error handling and recovery
-
-### Manual Tests
-- Login flow (first run)
-- Prompt submission and response
-- Long-running response handling
-- Browser state persistence
-- Detection avoidance verification
+### Phase 4: Optimization
+1. Fine-tune anti-detection parameters
+2. Optimize timeout configurations
+3. Add retry logic for transient failures
+4. Improve logging and debugging output
+5. Monitor for detection and adjust strategies
 
 ## Success Criteria
 
@@ -360,61 +575,30 @@ elif method == "tools/call":
 5. ✅ Long responses (1 hour) handled correctly
 6. ✅ Error handling and logging preserved
 7. ✅ Performance comparable or better than Selenium
-
-## Rollout Plan
-
-1. **Development**: Create new file alongside existing Selenium version
-2. **Testing**: Validate functionality in isolated environment
-3. **Comparison**: Run both versions in parallel to compare detection rates
-4. **Migration**: Switch to Playwright version once validated
-5. **Cleanup**: Keep Selenium version as backup initially
-6. **Documentation**: Update usage instructions and configuration guide
-
-## Additional Enhancements (Optional)
-
-### 1. Playwright-Stealth Integration
-```python
-from playwright_stealth import stealth_async
-
-async def get_page(context):
-    page = await context.new_page()
-    await stealth_async(page)
-    return page
-```
-
-### 2. Request Interception
-```python
-async def route_handler(route):
-    # Block analytics and tracking
-    if any(x in route.request.url for x in ['analytics', 'tracking']):
-        await route.abort()
-    else:
-        await route.continue_()
-
-await page.route('**/*', route_handler)
-```
-
-### 3. Screenshot on Error
-```python
-except Exception as e:
-    screenshot_path = BASE_DIR / f"error_{datetime.now():%Y%m%d_%H%M%S}.png"
-    await page.screenshot(path=str(screenshot_path))
-    logging.error(f"Screenshot saved to {screenshot_path}")
-    raise
-```
+8. ✅ Expert-recommended enhancements implemented
+9. ✅ Telemetry blocking functional
+10. ✅ Human-like behavior patterns working
 
 ## References
 
 - [Playwright Python Documentation](https://playwright.dev/python/)
+- [Playwright-Stealth Library](https://github.com/AtuboDad/playwright_stealth)
+- [Chrome New Headless Mode](https://developer.chrome.com/articles/new-headless/)
 - [Playwright Anti-Detection Guide](https://playwright.dev/docs/test-use-options#emulation)
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
 - [Browser Fingerprinting Techniques](https://pixelscan.net/)
+- [Gemini Expert Review](gemini-expert-review.md)
 
 ## Next Steps
 
 Once this plan is approved:
-1. Switch to Code mode to implement the solution
-2. Create [`mcp_playwright.py`](../web-screper/mcp_playwright.py) with full implementation
-3. Update [`requirements.txt`](../requirements.txt) with Playwright dependencies
-4. Test the implementation thoroughly
-5. Document usage instructions and differences
+1. Rename [`web-screper/`](../web-screper/) to [`web-scraper/`](../web-scraper/)
+2. Rename [`web-scraper/mcp.py`](../web-scraper/mcp.py) to [`web-scraper/selenium_mcp.py`](../web-scraper/selenium_mcp.py)
+3. Create new [`mcp-server/`](../mcp-server/) directory structure
+4. Implement [`mcp-server/config.py`](../mcp-server/config.py) with centralized configuration
+5. Implement [`mcp-server/stealth_utils.py`](../mcp-server/stealth_utils.py) with expert-recommended functions
+6. Implement [`mcp-server/playwright_mcp.py`](../mcp-server/playwright_mcp.py) with full stealth integration
+7. Update [`requirements.txt`](../requirements.txt) with Playwright and playwright-stealth
+8. Install Playwright browsers: `playwright install chrome`
+9. Test the implementation thoroughly with new headless mode and expert enhancements
+10. Document usage instructions and differences
