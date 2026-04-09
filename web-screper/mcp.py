@@ -98,17 +98,29 @@ def ask_gemini(prompt: str) -> str:
 
             try {{
                 let finished = false;
+                let lastLength = 0;
+                let stableCount = 0;
 
                 let interval = setInterval(() => {{
                     try {{
                         const msgs = document.querySelectorAll('message-content');
                         if (msgs.length > 0) {{
                             const last = msgs[msgs.length - 1].innerText;
+                            const currentLength = last ? last.length : 0;
 
-                            if (last && last.length > 20) {{
-                                finished = true;
-                                clearInterval(interval);
-                                callback(last);
+                            // Check if response has stopped growing (stable for 3 checks)
+                            if (currentLength > 20) {{
+                                if (currentLength === lastLength) {{
+                                    stableCount++;
+                                    if (stableCount >= 3) {{
+                                        finished = true;
+                                        clearInterval(interval);
+                                        callback(last);
+                                    }}
+                                }} else {{
+                                    stableCount = 0;
+                                    lastLength = currentLength;
+                                }}
                             }}
                         }}
                     }} catch (e) {{
@@ -117,14 +129,6 @@ def ask_gemini(prompt: str) -> str:
                         callback("JS ERROR: " + e.message);
                     }}
                 }}, 1500);
-
-                setTimeout(() => {{
-                    if (!finished) {{
-                        finished = true;
-                        clearInterval(interval);
-                        callback("ERROR: Timeout waiting response");
-                    }}
-                }}, 60000);
 
                 async function run() {{
                     const input = document.querySelector('[data-placeholder="Ask Gemini"]');
