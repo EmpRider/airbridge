@@ -13,6 +13,10 @@ from selenium.webdriver.edge.service import Service
 # ---------------- CONFIG ----------------
 GEMINI_URL = "https://gemini.google.com/app"
 
+# Timeout configuration (1 hour = 3600 seconds)
+SCRIPT_TIMEOUT = 3600  # Max time for JavaScript execution
+CONNECTION_TIMEOUT = 3600  # Max time for HTTP connection reads
+
 BASE_DIR = Path.home() / "web-proxy"
 USER_DATA_DIR = BASE_DIR / "edge-debug-profile"
 LOG_FILE = BASE_DIR / "mcp.log"
@@ -80,7 +84,12 @@ def ask_gemini(prompt: str) -> str:
 
         logging.debug("Launching Edge WebDriver...")
         driver = webdriver.Edge(service=service, options=options)
-        driver.set_script_timeout(120)
+        
+        # Set script timeout to 1 hour for long Gemini responses
+        driver.set_script_timeout(SCRIPT_TIMEOUT)
+        
+        # Configure urllib3 connection timeout (fixes ReadTimeoutError)
+        driver.command_executor._client_config.timeout = CONNECTION_TIMEOUT
 
         logging.debug(f"Opening URL: {GEMINI_URL}")
         driver.get(GEMINI_URL)
@@ -128,7 +137,7 @@ def ask_gemini(prompt: str) -> str:
                         clearInterval(interval);
                         callback("JS ERROR: " + e.message);
                     }}
-                }}, 1500);
+                }}, 1000);
 
                 async function run() {{
                     const input = document.querySelector('[data-placeholder="Ask Gemini"]');
