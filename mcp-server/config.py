@@ -32,7 +32,7 @@ NAVIGATION_TIMEOUT = 60000  # 60 seconds in milliseconds
 # Browser configuration
 # IMPORTANT: Set to False for first-time login to see UI and log in manually
 # After login is saved, change to True for headless operation
-USE_HEADLESS = False  # False = Show browser UI, True = Headless mode
+USE_HEADLESS = True  # False = Show browser UI, True = Headless mode
 BROWSER_CHANNEL = "chrome"  # Use Chrome for best compatibility
 
 # Stealth configuration (Expert recommendations)

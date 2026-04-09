@@ -66,29 +66,11 @@ async def get_browser():
     logger.info(f"Launching Playwright browser... (headless={USE_HEADLESS})")
     playwright = await async_playwright().start()
     
-    # Build args list - only add headless flag if USE_HEADLESS is True
+    # Build args list - keep minimal like login_helper to avoid detection
+    # Only use the essential flag that worked in login_helper
     launch_args = [
         '--disable-blink-features=AutomationControlled',
-            '--disable-dev-shm-usage',
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-web-security',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-hang-monitor',
-            '--disable-ipc-flooding-protection',
-            '--disable-popup-blocking',
-            '--disable-prompt-on-repost',
-            '--disable-sync',
-            '--force-color-profile=srgb',
-            '--metrics-recording-only',
-            '--no-first-run',
-            '--password-store=basic',
-            '--use-mock-keychain',
-            '--disable-extensions'
-        ]
+    ]
     
     # Only add headless flag if headless mode is enabled
     if USE_HEADLESS:
