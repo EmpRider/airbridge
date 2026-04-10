@@ -93,26 +93,38 @@ class GeminiAdapter(BaseAdapter):
                 time.sleep(5)
                 config.headless = original_headless
 
-            # Wait for input field using selectors from config
+            # Start Temporary Chat if available
+            logger.debug("Start Temporary Chat if available...")
+            temp_chat_selectors = self.get_all_selectors("temp-chat")
+            for sel in temp_chat_selectors:
+                try:
+                    temp_btns = driver.find_elements(By.CSS_SELECTOR, sel)
+                    if temp_btns and temp_btns[0].is_displayed():
+                        logger.info(f"Activating Temporary Chat via: {sel}")
+                        temp_btns[0].click()
+                        break
+                except Exception as e:
+                    logger.debug(f"Temp-chat selector {sel} failed: {e}")
+
+            # Wait for input field using optimized combined selectors
             logger.debug("Waiting for input field...")
             message_box_selectors = self.get_all_selectors("message-box")
             input_field = None
-            for sel in message_box_selectors:
+            if message_box_selectors:
                 try:
+                    # Combine all selectors with commas to find ANY of them in a single wait
+                    combined_selector = ", ".join(message_box_selectors)
                     input_field = WebDriverWait(driver, 30).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, sel))
+                        EC.presence_of_element_located((By.CSS_SELECTOR, combined_selector))
                     )
-                    if input_field:
-                        logger.debug(f"Found input field with selector: {sel}")
-                        break
-                except Exception:
-                    logger.debug(f"Selector '{sel}' not found, trying next...")
-                    continue
+                    logger.debug(f"Found input field using combined selector")
+                except Exception as e:
+                    logger.error(f"Failed to locate input field: {e}")
 
             if not input_field:
                 return "ERROR: Failed to locate input field. Check selectors in config.json."
 
-            random_delay(500, 1000)
+            random_delay(10, 50)
             prompt = prompt.replace('\n', ' ').replace('\r', '')
 
             # Capture initial completion signal count BEFORE sending
@@ -129,7 +141,7 @@ class GeminiAdapter(BaseAdapter):
                     input_field.send_keys(char)
                     time.sleep(0.01)
 
-            random_delay(300, 700)
+            random_delay(10, 50)
             input_field.send_keys(Keys.RETURN)
 
             # Wait for response using completion signal

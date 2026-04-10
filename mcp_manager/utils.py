@@ -11,21 +11,21 @@ from selenium.webdriver.common.keys import Keys
 logger = logging.getLogger(__name__)
 
 
-def human_type(element, text, min_delay=0.05, max_delay=0.15, typo_prob=0.05):
+def human_type(element, text, min_delay=0.0001, max_delay=0.0005, typo_prob=0.0001):
     """Type text with human-like delays and occasional typos."""
     for i, char in enumerate(text):
         delay = random.uniform(min_delay, max_delay)
         if random.random() < typo_prob and i > 0:
             wrong_char = random.choice('abcdefghijklmnopqrstuvwxyz')
             element.send_keys(wrong_char)
-            time.sleep(random.uniform(0.1, 0.3))
+            time.sleep(random.uniform(0.01, 0.05))
             element.send_keys(Keys.BACKSPACE)
-            time.sleep(random.uniform(0.05, 0.15))
+            time.sleep(random.uniform(0.005, 0.01))
         element.send_keys(char)
         time.sleep(delay)
 
 
-def random_delay(min_ms=100, max_ms=500):
+def random_delay(min_ms=1, max_ms=5):
     """Add a random delay to simulate human behavior."""
     delay = random.randint(min_ms, max_ms) / 1000
     time.sleep(delay)
@@ -62,7 +62,7 @@ def get_element_count(driver, selectors):
         return 0
 
 
-def wait_for_response(driver, complete_selectors, container_selectors, initial_count, poll_interval=1.0, max_iterations=3600):
+def wait_for_response(driver, complete_selectors, container_selectors, initial_count, poll_interval=0.1, max_iterations=3600):
     """
     Wait for LLM response completion by monitoring element count changes.
 

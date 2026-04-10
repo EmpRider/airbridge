@@ -5,6 +5,9 @@
             "description": "Deep reasoning and analysis via Google Gemini. Best for complex problem-solving, brainstorming, and multi-step logical thinking.",
             "url": "https://gemini.google.com/app",
             "selectors": {
+                "temp-chat": [
+                    "button[aria-label=\"Temporary chat\"]"
+                ],
                 "message-box": [
                     "[data-placeholder=\"Ask Gemini\"]",
                     "div[contenteditable=\"true\"]",
