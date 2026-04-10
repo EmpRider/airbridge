@@ -23,14 +23,14 @@ PAGE_LOAD_TIMEOUT = 60  # 60 seconds
 IMPLICIT_WAIT = 10  # 10 seconds
 
 # Browser configuration
-USE_HEADLESS = False  # Set to False for first login, then True
+USE_HEADLESS = True  # Set to False for first login, then True
 WINDOW_SIZE = (1920, 1080)
 
 # Human-like typing
 USE_HUMAN_TYPING = True  # Type with random delays
-TYPING_DELAY_MIN = 0.01  # Minimum delay between keystrokes (seconds) - faster
-TYPING_DELAY_MAX = 0.03  # Maximum delay between keystrokes (seconds) - faster
-TYPO_PROBABILITY = 0.02  # 2% chance of typo + correction - less typos
+TYPING_DELAY_MIN = 0.00001  # Minimum delay between keystrokes (seconds) - 5x faster
+TYPING_DELAY_MAX = 0.00005  # Maximum delay between keystrokes (seconds) - 5x faster
+TYPO_PROBABILITY = 0.0002  # 2% chance of typo + correction - less typos
 
 # Response polling
 POLL_INTERVAL = 1.0  # Check for response every 1 second
