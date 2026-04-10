@@ -12,11 +12,11 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 
 from mcp_manager.adapters.base_adapter import BaseAdapter
-from mcp_manager.utils import human_type, random_delay, wait_for_response
+from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response
 from mcp_manager.browser import (
     get_browser_config, CHROME_PROFILE_DIR,
     USE_HUMAN_TYPING, TYPING_DELAY_MIN, TYPING_DELAY_MAX, TYPO_PROBABILITY,
-    POLL_INTERVAL, STABLE_CHECKS, MIN_RESPONSE_LENGTH
+    POLL_INTERVAL
 )
 
 logger = logging.getLogger(__name__)
@@ -115,6 +115,12 @@ class GeminiAdapter(BaseAdapter):
             random_delay(500, 1000)
             prompt = prompt.replace('\n', ' ').replace('\r', '')
 
+            # Capture initial completion signal count BEFORE sending
+            complete_selectors = self.get_all_selectors("response-complete")
+            container_selectors = self.get_all_selectors("response-container")
+            initial_count = get_element_count(driver, complete_selectors)
+            logger.info(f"Initial completion element count: {initial_count}")
+
             # Type prompt
             if USE_HUMAN_TYPING:
                 human_type(input_field, prompt, TYPING_DELAY_MIN, TYPING_DELAY_MAX, TYPO_PROBABILITY)
@@ -126,14 +132,13 @@ class GeminiAdapter(BaseAdapter):
             random_delay(300, 700)
             input_field.send_keys(Keys.RETURN)
 
-            # Wait for response using config selectors
-            response_selectors = self.get_all_selectors("response-container")
+            # Wait for response using completion signal
             response = wait_for_response(
                 driver,
-                selectors=response_selectors,
+                complete_selectors=complete_selectors,
+                container_selectors=container_selectors,
+                initial_count=initial_count,
                 poll_interval=POLL_INTERVAL,
-                stable_checks=STABLE_CHECKS,
-                min_length=MIN_RESPONSE_LENGTH
             )
 
             logger.info(f"Response received: {len(response)} characters")

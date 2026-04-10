@@ -31,48 +31,95 @@ def random_delay(min_ms=100, max_ms=500):
     time.sleep(delay)
 
 
-def wait_for_response(driver, selectors, poll_interval=1.0, stable_checks=3, min_length=20, max_iterations=3600):
-    """Poll for LLM response completion using config-driven selectors."""
-    last_length = 0
-    stable_count = 0
+def get_element_count(driver, selectors):
+    """
+    Count DOM elements matching the first successful selector.
+
+    Args:
+        driver: Selenium WebDriver instance
+        selectors: List of CSS selectors to try in order
+
+    Returns:
+        int: Number of matching elements found
+    """
+    if not selectors:
+        return 0
+
+    js_script = f"""
+        var selectors = [{', '.join(f'"{s}"' for s in selectors)}];
+        for (var i = 0; i < selectors.length; i++) {{
+            var els = document.querySelectorAll(selectors[i]);
+            if (els.length > 0) {{
+                return els.length;
+            }}
+        }}
+        return 0;
+    """
+    try:
+        return driver.execute_script(js_script)
+    except Exception as e:
+        logger.error(f"Error counting elements: {e}")
+        return 0
+
+
+def wait_for_response(driver, complete_selectors, container_selectors, initial_count, poll_interval=1.0, max_iterations=3600):
+    """
+    Wait for LLM response completion by monitoring element count changes.
+
+    Stage 1: Poll until the count of 'complete_selectors' exceeds initial_count.
+    Stage 2: Extract the text from the last 'container_selectors' element.
+
+    Args:
+        driver: Selenium WebDriver instance
+        complete_selectors: CSS selectors for the completion signal element (e.g. message-actions)
+        container_selectors: CSS selectors for the response text container (e.g. message-content)
+        initial_count: Element count captured before the prompt was sent
+        poll_interval: Seconds between polls
+        max_iterations: Max polls before timeout
+
+    Returns:
+        str: The response text from the new element
+    """
     iterations = 0
-    response_selectors = selectors if selectors else ["message-content"]
+    logger.info(f"Waiting for completion signal (initial count: {initial_count})...")
 
-    logger.info("Polling for response...")
-
+    # Stage 1: Wait for completion signal count to increase
     while iterations < max_iterations:
-        try:
-            js_script = f"""
-                var selectors = [{', '.join(f'"{s}"' for s in response_selectors)}];
-                for (var i = 0; i < selectors.length; i++) {{
-                    var msgs = document.querySelectorAll(selectors[i]);
-                    if (msgs.length > 0) {{
-                        return msgs[msgs.length - 1].innerText;
-                    }}
-                }}
-                return null;
-            """
-            messages = driver.execute_script(js_script)
+        current_count = get_element_count(driver, complete_selectors)
 
-            if messages:
-                current_length = len(messages)
-                if current_length > min_length:
-                    if current_length == last_length:
-                        stable_count += 1
-                        if stable_count >= stable_checks:
-                            logger.info(f"Response stable after {iterations} iterations")
-                            return messages
-                    else:
-                        stable_count = 0
-                        last_length = current_length
-                        logger.debug(f"Response growing: {current_length} chars")
+        if current_count > initial_count:
+            logger.info(f"Completion signal detected after {iterations} polls (count: {initial_count} -> {current_count})")
+            break
 
-        except Exception as e:
-            logger.error(f"Error polling response: {e}")
-            return f"ERROR: {str(e)}"
+        if iterations % 10 == 0 and iterations > 0:
+            logger.debug(f"Still waiting... poll #{iterations}, count still {current_count}")
 
         time.sleep(poll_interval)
         iterations += 1
+    else:
+        logger.warning(f"Response timeout after {max_iterations} polls")
+        return "TIMEOUT: Response took longer than expected"
 
-    logger.warning(f"Response timeout after {max_iterations} iterations")
-    return "TIMEOUT: Response took longer than expected"
+    # Stage 2: Extract text from the last response container
+    try:
+        js_script = f"""
+            var selectors = [{', '.join(f'"{s}"' for s in container_selectors)}];
+            for (var i = 0; i < selectors.length; i++) {{
+                var msgs = document.querySelectorAll(selectors[i]);
+                if (msgs.length > 0) {{
+                    return msgs[msgs.length - 1].innerText;
+                }}
+            }}
+            return null;
+        """
+        response = driver.execute_script(js_script)
+
+        if response:
+            logger.info(f"Response extracted: {len(response)} characters")
+            return response
+        else:
+            return "ERROR: Completion signal detected but could not extract response text."
+
+    except Exception as e:
+        logger.error(f"Error extracting response: {e}")
+        return f"ERROR: {str(e)}"
