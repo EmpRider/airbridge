@@ -1,1 +1,29 @@
-/.idea/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Chrome profile data (contains login session)
+gemini-mcp/chrome-profile/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Archives (optional - uncomment to ignore)
+# archive/

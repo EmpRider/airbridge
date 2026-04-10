@@ -1,2 +1,2 @@
-playwright>=1.40.0
-playwright-stealth>=1.0.0
+undetected-chromedriver>=3.5.0
+setuptools>=65.0.0
