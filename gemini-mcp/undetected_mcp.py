@@ -516,22 +516,22 @@ async def mcp_server():
                 response["result"] = {
                     "tools": [
                         {
-                            "name": "ask_gemini",
-                            "description": "Send a prompt to Gemini via undetected-chromedriver (bypasses bot detection)",
+                            "name": "query_premium_model",
+                            "description": "Submits a complex prompt to the Gemini Large Language Model via a stealth browser. Use this tool when you need deep reasoning, generated text, code completion, or data analysis. Trigger keywords: TL;DR, summarize, solve, brainstorm. Do NOT use this tool for reading local files, simple OS queries, or trivial calculations.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "prompt": {
                                         "type": "string",
-                                        "description": "Prompt to send to Gemini"
+                                        "description": "The exact text prompt to send to Gemini. Be extremely explicit and comprehensive. Examples: 'Write a python script to...', 'Summarize this log...'"
                                     },
                                     "chrome_path": {
                                         "type": "string",
-                                        "description": "Optional: Path to Chrome executable (auto-detected if not provided)"
+                                        "description": "Absolute system path to the local Google Chrome executable. Use this only if automatic chrome detection fails."
                                     },
                                     "headless": {
                                         "type": "boolean",
-                                        "description": "Optional: Run in headless mode (default from config)"
+                                        "description": "Run the browser invisibly. Set strictly to false if you suspect the browser requires manual human interaction for a login challenge."
                                     }
                                 },
                                 "required": ["prompt"]
@@ -560,7 +560,7 @@ async def mcp_server():
                 logger.debug(f"Tool call: {tool_name}")
                 log_json("ARGS", arguments)
                 
-                if tool_name == "ask_gemini":
+                if tool_name == "query_premium_model":
                     prompt = arguments.get("prompt", "")
                     chrome_path = arguments.get("chrome_path")
                     headless = arguments.get("headless")
