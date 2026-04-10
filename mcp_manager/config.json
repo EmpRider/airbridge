@@ -4,6 +4,7 @@
             "adapter": "gemini",
             "description": "Deep reasoning and analysis via Google Gemini. Best for complex problem-solving, brainstorming, and multi-step logical thinking.",
             "url": "https://gemini.google.com/app",
+            "models": ["Fast", "Thinking", "Pro"],
             "selectors": {
                 "temp-chat": [
                     "button[aria-label=\"Temporary chat\"]"
@@ -18,6 +19,12 @@
                 ],
                 "response-complete": [
                     "message-actions"
+                ],
+                "mode-picker": [
+                    "[aria-label=\"Open mode picker\"]"
+                ],
+                "mode-item": [
+                    "[mat-menu-item]"
                 ],
                 "sign-in": [
                     "a[aria-label=\"Sign in\"]"

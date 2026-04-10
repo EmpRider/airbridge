@@ -60,7 +60,7 @@ def _build_tools_list():
         },
         {
             "name": "query_premium_model",
-            "description": f"Submits a prompt to a premium LLM via stealth browser automation. You MUST specify a 'task' parameter to select the target model. Available tasks: {task_descriptions}. Use 'get_available_tasks' to discover options dynamically.",
+            "description": f"Submits a prompt to a premium LLM via stealth browser automation. You MUST specify a 'task' parameter to select the target adapter and a 'model' parameter to select the specific chat model. Available tasks: {task_descriptions}. Use 'get_available_tasks' to discover options dynamically.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -73,6 +73,11 @@ def _build_tools_list():
                         "description": f"Which task/model to use. One of: {task_names}",
                         "enum": task_names
                     },
+                    "model": {
+                        "type": "string",
+                        "description": "The specific chat model to use: 'Fast', 'Thinking', or 'Pro'. This determines which Gemini model variant will process your request.",
+                        "enum": ["Fast", "Thinking", "Pro"]
+                    },
                     "chrome_path": {
                         "type": "string",
                         "description": "Optional: Absolute path to Chrome executable."
@@ -82,7 +87,7 @@ def _build_tools_list():
                         "description": "Optional: Run browser invisibly. Set to false if login is needed."
                     }
                 },
-                "required": ["prompt", "task"]
+                "required": ["prompt", "task", "model"]
             }
         }
     ]
@@ -149,6 +154,7 @@ async def mcp_server():
                 elif tool_name == "query_premium_model":
                     prompt = arguments.get("prompt", "")
                     task_name = arguments.get("task", "")
+                    model = arguments.get("model", "")
                     chrome_path = arguments.get("chrome_path")
                     headless = arguments.get("headless")
 
@@ -157,10 +163,15 @@ async def mcp_server():
                             "code": -32602,
                             "message": "Missing required parameter: 'task'. Call 'get_available_tasks' to see options."
                         }
+                    elif not model:
+                        response["error"] = {
+                            "code": -32602,
+                            "message": "Missing required parameter: 'model'. Must be one of: 'Fast', 'Thinking', 'Pro'."
+                        }
                     else:
                         try:
                             adapter = create_adapter(task_name)
-                            output = await asyncio.to_thread(adapter.process, prompt, chrome_path, headless)
+                            output = await asyncio.to_thread(adapter.process, prompt, model, chrome_path, headless)
                             response["result"] = {
                                 "content": [{"type": "text", "text": output}]
                             }

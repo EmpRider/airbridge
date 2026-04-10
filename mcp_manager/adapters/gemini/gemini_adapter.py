@@ -25,8 +25,15 @@ logger = logging.getLogger(__name__)
 class GeminiAdapter(BaseAdapter):
     """Adapter for Google Gemini browser automation."""
 
-    def process(self, prompt, chrome_path=None, headless=None):
-        """Send prompt to Gemini and return the response."""
+    def process(self, prompt, model, chrome_path=None, headless=None):
+        """Send prompt to Gemini and return the response.
+        
+        Args:
+            prompt: The text prompt to send
+            model: The chat model to use ('Fast', 'Thinking', or 'Pro')
+            chrome_path: Optional path to Chrome executable
+            headless: Optional headless mode setting
+        """
         driver = None
         try:
             logger.info(f"=== NEW {self.adapter_name.upper()} REQUEST ===")
@@ -106,6 +113,10 @@ class GeminiAdapter(BaseAdapter):
                 except Exception as e:
                     logger.debug(f"Temp-chat selector {sel} failed: {e}")
 
+            # Select the specified model
+            logger.info(f"Selecting model: {model}")
+            self._select_mode(driver, model)
+
             # Wait for input field using optimized combined selectors
             logger.debug("Waiting for input field...")
             message_box_selectors = self.get_all_selectors("message-box")
@@ -174,3 +185,60 @@ class GeminiAdapter(BaseAdapter):
                 except Exception as e:
                     logger.error(f"Error closing driver: {e}")
             logger.info("=== REQUEST COMPLETE ===")
+
+    def _select_mode(self, driver, model_name):
+        """Select the specified chat model via the mode picker.
+        
+        Args:
+            driver: Selenium WebDriver instance
+            model_name: Name of the model to select ('Fast', 'Thinking', or 'Pro')
+        """
+        try:
+            logger.info(f"Attempting to select '{model_name}' mode...")
+            
+            # Get selectors from config
+            picker_selectors = self.get_all_selectors("mode-picker")
+            item_selectors = self.get_all_selectors("mode-item")
+            
+            if not picker_selectors:
+                logger.warning("No 'mode-picker' selectors found in config. Skipping mode selection.")
+                return
+            
+            if not item_selectors:
+                logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
+                return
+            
+            # Wait for and click the mode picker button
+            combined_picker = ", ".join(picker_selectors)
+            try:
+                picker_btn = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, combined_picker))
+                )
+                picker_btn.click()
+                logger.debug("Mode picker clicked successfully")
+                time.sleep(1)  # Wait for menu animation
+            except Exception as e:
+                logger.warning(f"Could not click mode picker: {e}. Mode may already be selected.")
+                return
+            
+            # Find and click the specified model item
+            combined_items = ", ".join(item_selectors)
+            try:
+                items = driver.find_elements(By.CSS_SELECTOR, combined_items)
+                logger.debug(f"Found {len(items)} mode items")
+                
+                for item in items:
+                    item_text = item.text.strip()
+                    logger.debug(f"Checking item: '{item_text}'")
+                    if model_name in item_text:
+                        logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
+                        item.click()
+                        time.sleep(2)  # Wait for selection to apply
+                        return
+                
+                logger.warning(f"Could not find a mode item containing '{model_name}'")
+            except Exception as e:
+                logger.error(f"Error finding/clicking mode item: {e}")
+                
+        except Exception as e:
+            logger.error(f"Failed to select mode '{model_name}': {e}", exc_info=True)
