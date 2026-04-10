@@ -1,0 +1,25 @@
+{
+    "task": {
+        "thinking": {
+            "adapter": "gemini",
+            "description": "Deep reasoning and analysis via Google Gemini. Best for complex problem-solving, brainstorming, and multi-step logical thinking.",
+            "url": "https://gemini.google.com/app",
+            "selectors": {
+                "message-box": [
+                    "[data-placeholder=\"Ask Gemini\"]",
+                    "div[contenteditable=\"true\"]",
+                    ".ql-editor"
+                ],
+                "response-container": [
+                    "message-content"
+                ],
+                "response-complete": [
+                    "message-actions"
+                ],
+                "sign-in": [
+                    "a[aria-label=\"Sign in\"]"
+                ]
+            }
+        }
+    }
+}
