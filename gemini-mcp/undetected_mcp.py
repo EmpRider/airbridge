@@ -22,7 +22,8 @@ from config import (
     USE_HEADLESS, WINDOW_SIZE,
     USE_HUMAN_TYPING, TYPING_DELAY_MIN, TYPING_DELAY_MAX, TYPO_PROBABILITY,
     SCRIPT_TIMEOUT, PAGE_LOAD_TIMEOUT, IMPLICIT_WAIT,
-    POLL_INTERVAL, STABLE_CHECKS, MIN_RESPONSE_LENGTH
+    POLL_INTERVAL, STABLE_CHECKS, MIN_RESPONSE_LENGTH,
+    CHROME_BINARY_PATH
 )
 from utils import human_type, wait_for_response, random_delay
 
@@ -56,13 +57,28 @@ def get_driver():
     Returns:
         WebDriver instance
     """
+    # Validate Chrome installation
+    if not CHROME_BINARY_PATH:
+        raise RuntimeError(
+            "Chrome not found. Please install Google Chrome:\n"
+            "https://www.google.com/chrome/\n"
+            "Or set CHROME_PATH environment variable to Chrome executable path."
+        )
+    
+    if not Path(CHROME_BINARY_PATH).exists():
+        raise RuntimeError(
+            f"Chrome not found at: {CHROME_BINARY_PATH}\n"
+            "Please install Chrome or set CHROME_PATH environment variable."
+        )
+    
     logger.info(f"Launching undetected Chrome (headless={USE_HEADLESS})...")
+    logger.info(f"Using Chrome at: {CHROME_BINARY_PATH}")
     
     # Configure Chrome options
     options = uc.ChromeOptions()
     
-    # Use persistent profile for session management
-    options.add_argument(f'--user-data-dir={CHROME_PROFILE_DIR}')
+    # Explicitly set Chrome binary location
+    options.binary_location = CHROME_BINARY_PATH
     
     # Set window size
     options.add_argument(f'--window-size={WINDOW_SIZE[0]},{WINDOW_SIZE[1]}')
@@ -72,10 +88,13 @@ def get_driver():
         options.add_argument('--headless=new')
     
     # Create driver (auto-patches on first run)
+    # Note: user_data_dir is passed directly to uc.Chrome, not via options
     driver = uc.Chrome(
         options=options,
+        user_data_dir=str(CHROME_PROFILE_DIR),  # Pass as parameter, not argument
         version_main=None,  # Auto-detect Chrome version
         driver_executable_path=None,  # Auto-download if needed
+        browser_executable_path=CHROME_BINARY_PATH  # Explicit Chrome path
     )
     
     # Set timeouts

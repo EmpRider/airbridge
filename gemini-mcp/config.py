@@ -1,6 +1,8 @@
 """
 Configuration for Gemini MCP Server using undetected-chromedriver
 """
+import os
+import platform
 from pathlib import Path
 
 # Base directories
@@ -34,3 +36,38 @@ TYPO_PROBABILITY = 0.02  # 2% chance of typo + correction - less typos
 POLL_INTERVAL = 1.0  # Check for response every 1 second
 STABLE_CHECKS = 3  # Response must be stable for 3 checks
 MIN_RESPONSE_LENGTH = 20  # Minimum characters before considering response
+
+# Chrome binary location
+def get_chrome_path():
+    """
+    Auto-detect Chrome installation path
+    
+    Returns:
+        str: Path to Chrome executable, or None if not found
+    """
+    if platform.system() == "Windows":
+        paths = [
+            Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+            Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"),
+            Path.home() / "AppData/Local/Google/Chrome/Application/chrome.exe"
+        ]
+        for path in paths:
+            if path.exists():
+                return str(path)
+    elif platform.system() == "Darwin":  # macOS
+        path = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        if path.exists():
+            return str(path)
+    else:  # Linux
+        paths = [
+            Path("/usr/bin/google-chrome"),
+            Path("/usr/bin/chromium-browser"),
+            Path("/usr/bin/chromium")
+        ]
+        for path in paths:
+            if path.exists():
+                return str(path)
+    return None
+
+# Allow override via environment variable
+CHROME_BINARY_PATH = os.getenv("CHROME_PATH") or get_chrome_path()
