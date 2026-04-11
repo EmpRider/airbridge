@@ -76,50 +76,24 @@ class GeminiAdapter(BaseAdapter):
                         pass
 
             if needs_login:
-                logger.info("Login required. Navigating to login page and waiting for user...")
+                logger.info("Login required, delegating to login handler...")
                 
-                # Navigate to Google accounts login page
-                logger.info("Navigating to accounts.google.com for manual login")
-                await page.goto("https://accounts.google.com", wait_until="domcontentloaded")
+                from mcp_manager.login_handler import LoginHandler
+                login_handler = LoginHandler()
+                
+                success = await login_handler.handle_login(
+                    task_name=self.task_name,
+                    target_context=page.context,
+                    config=self.config
+                )
+                
+                if not success:
+                    return "ERROR: Login failed or timed out. Please try again."
+                
+                logger.info("Login successful, reloading page...")
+                # Reload page to apply cookies
+                await page.goto(target_url, wait_until="domcontentloaded")
                 await asyncio.sleep(2)
-                
-                logger.info("Waiting up to 5 minutes for user login...")
-                start_wait = asyncio.get_event_loop().time()
-                logged_in = False
-                
-                while asyncio.get_event_loop().time() - start_wait < 300:
-                    try:
-                        title = await page.title()
-                        title = title.strip()
-                        # Check if we're on the Google Account page (logged in)
-                        if title in ["Google Account", "Google Accounts"]:
-                            logged_in = True
-                            break
-                        # Also check if we can access Gemini now
-                        current_url = page.url
-                        if "gemini.google.com" in current_url:
-                            # Try to find the input field
-                            message_box_selectors = self.get_all_selectors("message-box")
-                            if message_box_selectors:
-                                combined_selector = ", ".join(message_box_selectors)
-                                input_count = await page.locator(combined_selector).count()
-                                if input_count > 0:
-                                    logged_in = True
-                                    logger.info("Login successful - found message input field")
-                                    break
-                    except Exception as e:
-                        # Page might be navigating during login, ignore and retry
-                        logger.debug(f"Error checking login status: {e}")
-                    await asyncio.sleep(1)
-                
-                if not logged_in:
-                    return "ERROR: Login timed out after 5 minutes. Please try again."
-                
-                logger.info("Login successful! Navigating back to Gemini...")
-                # If we're not already on Gemini, navigate there
-                if "gemini.google.com" not in page.url:
-                    await page.goto(target_url, wait_until="domcontentloaded")
-                    await asyncio.sleep(3)
 
             # Select the specified model
             logger.info(f"Selecting model: {model}")

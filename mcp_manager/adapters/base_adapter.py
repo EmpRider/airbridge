@@ -15,6 +15,7 @@ class BaseAdapter(ABC):
             task_config: The full task dict from config.json including adapter, description, selectors
         """
         self.task_name = task_name
+        self.config = task_config  # Store full config for access to all fields
         self.adapter_name = task_config.get("adapter", "unknown")
         self.description = task_config.get("description", "")
         self.url = task_config.get("url", "")

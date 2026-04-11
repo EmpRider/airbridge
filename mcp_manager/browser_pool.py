@@ -205,16 +205,12 @@ class BrowserPool:
             from mcp_manager.browser import get_browser_config
 
             config = get_browser_config()
-            # Use persistent context to preserve login sessions
-            # Each context gets its own profile subdirectory
-            profile_subdir = f"context_{context_id}"
-            context = await config.create_context(
-                profile_subdir=profile_subdir,
-                headless_override=headless
-            )
+            # Use ephemeral context for resource efficiency
+            # Session data will be transferred via cookies when needed
+            context = await config.create_context(headless_override=headless)
             
             # Get or create a page from the context
-            # Persistent contexts have pages, ephemeral contexts need one created
+            # Ephemeral contexts need a page created
             pages = context.pages
             if pages:
                 page = pages[0]
@@ -228,7 +224,7 @@ class BrowserPool:
                 headless=headless,
             )
             self.contexts.append(slot)
-            logger.info(f"Context {context_id} spawned (headless={headless}) with persistent profile")
+            logger.info(f"Context {context_id} spawned (headless={headless}) - ephemeral")
             return slot
 
         except Exception as e:

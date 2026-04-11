@@ -22,6 +22,16 @@
             "description": "Deep reasoning and analysis via Google Gemini. Best for complex problem-solving, brainstorming, and multi-step logical thinking.",
             "url": "https://gemini.google.com/app",
             "models": ["Fast", "Thinking", "Pro"],
+            "login": {
+                "url": "https://accounts.google.com",
+                "profile_subdir": "gemini_login",
+                "success_indicators": {
+                    "titles": ["Google Account", "Google Accounts"],
+                    "urls": ["gemini.google.com"],
+                    "selectors": ["[data-placeholder=\"Ask Gemini\"]", "div[contenteditable=\"true\"]"]
+                },
+                "timeout": 300
+            },
             "selectors": {
                 "temp-chat": [
                     "button[aria-label=\"Temporary chat\"]"
