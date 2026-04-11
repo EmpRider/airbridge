@@ -16,7 +16,7 @@ from mcp_manager.utils import human_type, random_delay, get_element_count, wait_
 from mcp_manager.browser import (
     get_browser_config, CHROME_PROFILE_DIR,
     USE_HUMAN_TYPING, TYPING_DELAY_MIN, TYPING_DELAY_MAX, TYPO_PROBABILITY,
-    POLL_INTERVAL
+    POLL_INTERVAL, get_temp_chat_preference
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,9 @@ class GeminiAdapter(BaseAdapter):
             logger.info(f"Prompt length: {len(prompt)} characters")
 
             try:
-                config = get_browser_config(chrome_path, headless)
+                # Get browser config and ensure headless setting is applied
+                config = get_browser_config(chrome_path, headless, None)
+                logger.info(f"Browser config: headless={config.headless}, chrome={config.chrome_executable}")
             except FileNotFoundError as e:
                 logger.error(f"Chrome validation failed: {e}")
                 return f"ERROR: {e}"
@@ -100,18 +102,25 @@ class GeminiAdapter(BaseAdapter):
                 time.sleep(5)
                 config.headless = original_headless
 
-            # Start Temporary Chat if available
-            logger.debug("Start Temporary Chat if available...")
-            temp_chat_selectors = self.get_all_selectors("temp-chat")
-            for sel in temp_chat_selectors:
-                try:
-                    temp_btns = driver.find_elements(By.CSS_SELECTOR, sel)
-                    if temp_btns and temp_btns[0].is_displayed():
-                        logger.info(f"Activating Temporary Chat via: {sel}")
-                        temp_btns[0].click()
-                        break
-                except Exception as e:
-                    logger.debug(f"Temp-chat selector {sel} failed: {e}")
+            # Start Temporary Chat if available and enabled
+            use_temp_chat = get_temp_chat_preference()
+            logger.info(f"Temp chat preference: {use_temp_chat}")
+
+            if use_temp_chat:
+                logger.debug("Attempting to start Temporary Chat...")
+                temp_chat_selectors = self.get_all_selectors("temp-chat")
+                for sel in temp_chat_selectors:
+                    try:
+                        temp_btns = driver.find_elements(By.CSS_SELECTOR, sel)
+                        if temp_btns and temp_btns[0].is_displayed():
+                            logger.info(f"Activating Temporary Chat via: {sel}")
+                            temp_btns[0].click()
+                            time.sleep(2)  # Wait for temp chat to activate
+                            break
+                    except Exception as e:
+                        logger.debug(f"Temp-chat selector {sel} failed: {e}")
+            else:
+                logger.info("Temp chat disabled, using normal chat mode")
 
             # Select the specified model
             logger.info(f"Selecting model: {model}")

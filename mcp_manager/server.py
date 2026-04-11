@@ -158,6 +158,8 @@ async def mcp_server():
                     chrome_path = arguments.get("chrome_path")
                     headless = arguments.get("headless")
 
+                    logger.info(f"Tool call parameters: task={task_name}, model={model}, chrome_path={chrome_path}, headless={headless}")
+
                     if not task_name:
                         response["error"] = {
                             "code": -32602,
@@ -170,13 +172,21 @@ async def mcp_server():
                         }
                     else:
                         try:
+                            logger.info(f"Creating adapter for task: {task_name}")
                             adapter = create_adapter(task_name)
+                            logger.info(f"Adapter created: {adapter}")
+                            logger.info(f"Starting adapter.process() in background thread...")
                             output = await asyncio.to_thread(adapter.process, prompt, model, chrome_path, headless)
+                            logger.info(f"Adapter.process() completed. Output length: {len(output)}")
                             response["result"] = {
                                 "content": [{"type": "text", "text": output}]
                             }
                         except ValueError as e:
+                            logger.error(f"Adapter creation failed: {e}")
                             response["error"] = {"code": -32602, "message": str(e)}
+                        except Exception as e:
+                            logger.error(f"Adapter execution failed: {e}", exc_info=True)
+                            response["error"] = {"code": -32603, "message": f"Adapter execution error: {str(e)}"}
 
                 else:
                     response["error"] = {"code": -32601, "message": f"Tool not found: {tool_name}"}
@@ -221,6 +231,8 @@ EXAMPLES:
     parser.add_argument("--no-headless", action="store_true", help="Run Chrome in windowed mode")
     parser.add_argument("--profile-dir", help="Custom Chrome profile directory")
     parser.add_argument("--config", help="Path to adapter config JSON file")
+    parser.add_argument("--use-temp-chat", action="store_true", default=True, help="Use temporary chat mode (default: True)")
+    parser.add_argument("--no-temp-chat", action="store_true", help="Disable temporary chat mode")
     return parser.parse_args()
 
 
@@ -245,6 +257,17 @@ def main():
 
         profile_dir = Path(args.profile_dir) if args.profile_dir else None
         get_browser_config(args.chrome_path, headless, profile_dir)
+
+        # Determine temp chat setting
+        use_temp_chat = True  # Default
+        if args.no_temp_chat:
+            use_temp_chat = False
+        elif args.use_temp_chat:
+            use_temp_chat = True
+
+        # Store temp chat setting globally for adapters to access
+        from mcp_manager.browser import set_temp_chat_preference
+        set_temp_chat_preference(use_temp_chat)
 
         logger.info("Starting MCP server (adapter architecture)")
         asyncio.run(mcp_server())

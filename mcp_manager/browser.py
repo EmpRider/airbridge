@@ -152,10 +152,38 @@ class BrowserConfig:
 # Singleton pattern for global browser config
 _browser_config = None
 
+# Global temp chat preference
+_use_temp_chat = True  # Default to True
+
+
+def set_temp_chat_preference(use_temp_chat):
+    """Set the global temp chat preference."""
+    global _use_temp_chat
+    _use_temp_chat = use_temp_chat
+    logger.info(f"Temp chat preference set to: {use_temp_chat}")
+
+
+def get_temp_chat_preference():
+    """Get the global temp chat preference."""
+    return _use_temp_chat
+
 
 def get_browser_config(chrome_path=None, headless=None, profile_dir=None):
-    """Get or create the global browser configuration."""
+    """Get or create the global browser configuration.
+
+    If config already exists, updates it with any non-None parameters.
+    """
     global _browser_config
     if _browser_config is None:
         _browser_config = BrowserConfig(chrome_path, headless, profile_dir)
+    else:
+        # Update existing config with non-None parameters
+        if chrome_path is not None:
+            _browser_config.chrome_path = chrome_path
+            _browser_config.chrome_executable = validate_chrome(chrome_path)
+        if headless is not None:
+            _browser_config.headless = headless
+        if profile_dir is not None:
+            _browser_config.profile_dir = profile_dir
+            _browser_config.profile_dir.mkdir(parents=True, exist_ok=True)
     return _browser_config
