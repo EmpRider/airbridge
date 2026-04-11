@@ -21,17 +21,15 @@ class BaseAdapter(ABC):
         self.selectors = task_config.get("selectors", {})
 
     @abstractmethod
-    def process(self, prompt, model, chrome_path=None, headless=None, driver=None, tab_handle=None):
+    async def process(self, prompt, model, page=None, **kwargs):
         """
         Execute the prompt against the target LLM via browser automation.
 
         Args:
             prompt: The text prompt to send
             model: The model variant to use (e.g., 'Fast', 'Thinking', 'Pro')
-            chrome_path: Optional Chrome binary path override
-            headless: Optional headless mode override
-            driver: Optional pre-existing WebDriver instance (for pooling)
-            tab_handle: Optional tab handle to use (for pooling)
+            page: Playwright Page instance (for pooling)
+            **kwargs: Additional adapter-specific arguments
 
         Returns:
             str: The LLM response text

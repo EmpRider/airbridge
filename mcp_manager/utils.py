@@ -1,42 +1,40 @@
 """
-Shared utilities for browser-based LLM adapters.
+Shared utilities for Playwright-based LLM adapters.
 Reusable across all adapters (Gemini, Claude, etc.)
 """
-import time
+import asyncio
 import random
 import logging
-
-from selenium.webdriver.common.keys import Keys
 
 logger = logging.getLogger(__name__)
 
 
-def human_type(element, text, min_delay=0.0001, max_delay=0.0005, typo_prob=0.0001):
+async def human_type(locator, text, min_delay=0.0001, max_delay=0.0005, typo_prob=0.0001):
     """Type text with human-like delays and occasional typos."""
     for i, char in enumerate(text):
         delay = random.uniform(min_delay, max_delay)
         if random.random() < typo_prob and i > 0:
             wrong_char = random.choice('abcdefghijklmnopqrstuvwxyz')
-            element.send_keys(wrong_char)
-            time.sleep(random.uniform(0.01, 0.05))
-            element.send_keys(Keys.BACKSPACE)
-            time.sleep(random.uniform(0.005, 0.01))
-        element.send_keys(char)
-        time.sleep(delay)
+            await locator.type(wrong_char)
+            await asyncio.sleep(random.uniform(0.01, 0.05))
+            await locator.press('Backspace')
+            await asyncio.sleep(random.uniform(0.005, 0.01))
+        await locator.type(char)
+        await asyncio.sleep(delay)
 
 
-def random_delay(min_ms=1, max_ms=5):
+async def random_delay(min_ms=1, max_ms=5):
     """Add a random delay to simulate human behavior."""
     delay = random.randint(min_ms, max_ms) / 1000
-    time.sleep(delay)
+    await asyncio.sleep(delay)
 
 
-def get_element_count(driver, selectors):
+async def get_element_count(page, selectors):
     """
     Count DOM elements matching the first successful selector.
 
     Args:
-        driver: Selenium WebDriver instance
+        page: Playwright Page instance
         selectors: List of CSS selectors to try in order
 
     Returns:
@@ -46,23 +44,25 @@ def get_element_count(driver, selectors):
         return 0
 
     js_script = f"""
-        var selectors = [{', '.join(f'"{s}"' for s in selectors)}];
-        for (var i = 0; i < selectors.length; i++) {{
-            var els = document.querySelectorAll(selectors[i]);
-            if (els.length > 0) {{
-                return els.length;
+        () => {{
+            var selectors = [{', '.join(f'"{s}"' for s in selectors)}];
+            for (var i = 0; i < selectors.length; i++) {{
+                var els = document.querySelectorAll(selectors[i]);
+                if (els.length > 0) {{
+                    return els.length;
+                }}
             }}
+            return 0;
         }}
-        return 0;
     """
     try:
-        return driver.execute_script(js_script)
+        return await page.evaluate(js_script)
     except Exception as e:
         logger.error(f"Error counting elements: {e}")
         return 0
 
 
-def wait_for_response(driver, complete_selectors, container_selectors, initial_count, poll_interval=0.1, max_iterations=3600):
+async def wait_for_response(page, complete_selectors, container_selectors, initial_count, poll_interval=0.1, max_iterations=3600):
     """
     Wait for LLM response completion by monitoring element count changes.
 
@@ -70,9 +70,9 @@ def wait_for_response(driver, complete_selectors, container_selectors, initial_c
     Stage 2: Extract the text from the last 'container_selectors' element.
 
     Args:
-        driver: Selenium WebDriver instance
-        complete_selectors: CSS selectors for the completion signal element (e.g. message-actions)
-        container_selectors: CSS selectors for the response text container (e.g. message-content)
+        page: Playwright Page instance
+        complete_selectors: CSS selectors for the completion signal element
+        container_selectors: CSS selectors for the response text container
         initial_count: Element count captured before the prompt was sent
         poll_interval: Seconds between polls
         max_iterations: Max polls before timeout
@@ -85,7 +85,7 @@ def wait_for_response(driver, complete_selectors, container_selectors, initial_c
 
     # Stage 1: Wait for completion signal count to increase
     while iterations < max_iterations:
-        current_count = get_element_count(driver, complete_selectors)
+        current_count = await get_element_count(page, complete_selectors)
 
         if current_count > initial_count:
             logger.info(f"Completion signal detected after {iterations} polls (count: {initial_count} -> {current_count})")
@@ -94,7 +94,7 @@ def wait_for_response(driver, complete_selectors, container_selectors, initial_c
         if iterations % 10 == 0 and iterations > 0:
             logger.debug(f"Still waiting... poll #{iterations}, count still {current_count}")
 
-        time.sleep(poll_interval)
+        await asyncio.sleep(poll_interval)
         iterations += 1
     else:
         logger.warning(f"Response timeout after {max_iterations} polls")
@@ -103,16 +103,18 @@ def wait_for_response(driver, complete_selectors, container_selectors, initial_c
     # Stage 2: Extract text from the last response container
     try:
         js_script = f"""
-            var selectors = [{', '.join(f'"{s}"' for s in container_selectors)}];
-            for (var i = 0; i < selectors.length; i++) {{
-                var msgs = document.querySelectorAll(selectors[i]);
-                if (msgs.length > 0) {{
-                    return msgs[msgs.length - 1].innerText;
+            () => {{
+                var selectors = [{', '.join(f'"{s}"' for s in container_selectors)}];
+                for (var i = 0; i < selectors.length; i++) {{
+                    var msgs = document.querySelectorAll(selectors[i]);
+                    if (msgs.length > 0) {{
+                        return msgs[msgs.length - 1].innerText;
+                    }}
                 }}
+                return null;
             }}
-            return null;
         """
-        response = driver.execute_script(js_script)
+        response = await page.evaluate(js_script)
 
         if response:
             logger.info(f"Response extracted: {len(response)} characters")

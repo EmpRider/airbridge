@@ -96,10 +96,8 @@ class HTTPServer:
 
         # Initialize browser pool
         self.browser_pool = BrowserPool(
-            max_browsers=max_browsers,
-            max_tabs_per_browser=max_tabs_per_browser,
-            tab_idle_timeout=tab_idle_timeout,
-            browser_idle_timeout=browser_idle_timeout,
+            max_contexts=max_browsers,  # Renamed from max_browsers
+            context_idle_timeout=browser_idle_timeout,  # Renamed from browser_idle_timeout
             lazy_spawn=lazy_spawn,
             default_headless=default_headless,
         )
