@@ -27,8 +27,8 @@
                 "profile_subdir": "gemini_login",
                 "success_indicators": {
                     "titles": ["Google Account", "Google Accounts"],
-                    "urls": ["gemini.google.com"],
-                    "selectors": ["[data-placeholder=\"Ask Gemini\"]", "div[contenteditable=\"true\"]"]
+                    "urls": [],
+                    "selectors": []
                 },
                 "timeout": 300
             },
