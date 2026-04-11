@@ -21,7 +21,7 @@ class BaseAdapter(ABC):
         self.selectors = task_config.get("selectors", {})
 
     @abstractmethod
-    def process(self, prompt, model, chrome_path=None, headless=None):
+    def process(self, prompt, model, chrome_path=None, headless=None, driver=None, tab_handle=None):
         """
         Execute the prompt against the target LLM via browser automation.
 
@@ -30,6 +30,8 @@ class BaseAdapter(ABC):
             model: The model variant to use (e.g., 'Fast', 'Thinking', 'Pro')
             chrome_path: Optional Chrome binary path override
             headless: Optional headless mode override
+            driver: Optional pre-existing WebDriver instance (for pooling)
+            tab_handle: Optional tab handle to use (for pooling)
 
         Returns:
             str: The LLM response text

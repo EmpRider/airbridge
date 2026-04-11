@@ -25,33 +25,48 @@ logger = logging.getLogger(__name__)
 class GeminiAdapter(BaseAdapter):
     """Adapter for Google Gemini browser automation."""
 
-    def process(self, prompt, model, chrome_path=None, headless=None):
+    def process(self, prompt, model, chrome_path=None, headless=None, driver=None, tab_handle=None):
         """Send prompt to Gemini and return the response.
-        
+
         Args:
             prompt: The text prompt to send
             model: The chat model to use ('Fast', 'Thinking', or 'Pro')
             chrome_path: Optional path to Chrome executable
             headless: Optional headless mode setting
+            driver: Optional pre-existing WebDriver instance (for pooling)
+            tab_handle: Optional tab handle to use (for pooling)
         """
-        driver = None
+        # Check if using pooled browser
+        using_pool = driver is not None and tab_handle is not None
+
+        if not using_pool:
+            # Legacy mode: create new browser
+            driver = None
+
         try:
             logger.info(f"=== NEW {self.adapter_name.upper()} REQUEST ===")
             logger.info(f"Prompt length: {len(prompt)} characters")
+            logger.info(f"Using pooled browser: {using_pool}")
 
-            try:
-                # Get browser config and ensure headless setting is applied
-                config = get_browser_config(chrome_path, headless, None)
-                logger.info(f"Browser config: headless={config.headless}, chrome={config.chrome_executable}")
-            except FileNotFoundError as e:
-                logger.error(f"Chrome validation failed: {e}")
-                return f"ERROR: {e}"
+            if not using_pool:
+                # Legacy mode: create new browser
+                try:
+                    # Get browser config and ensure headless setting is applied
+                    config = get_browser_config(chrome_path, headless, None)
+                    logger.info(f"Browser config: headless={config.headless}, chrome={config.chrome_executable}")
+                except FileNotFoundError as e:
+                    logger.error(f"Chrome validation failed: {e}")
+                    return f"ERROR: {e}"
 
-            try:
-                driver = config.get_driver()
-            except RuntimeError as e:
-                logger.error(f"Driver creation failed: {e}")
-                return f"ERROR: {e}"
+                try:
+                    driver = config.get_driver()
+                except RuntimeError as e:
+                    logger.error(f"Driver creation failed: {e}")
+                    return f"ERROR: {e}"
+            else:
+                # Pooled mode: switch to the provided tab
+                logger.info(f"Switching to tab: {tab_handle}")
+                driver.switch_to.window(tab_handle)
 
             # Navigate to the URL from config
             target_url = self.url
@@ -188,11 +203,14 @@ class GeminiAdapter(BaseAdapter):
             return f"ERROR: {str(e)}"
 
         finally:
-            if driver:
-                try:
-                    driver.quit()
-                except Exception as e:
-                    logger.error(f"Error closing driver: {e}")
+            if not using_pool:
+                # Legacy mode: close browser
+                if driver:
+                    try:
+                        driver.quit()
+                    except Exception as e:
+                        logger.error(f"Error closing driver: {e}")
+            # Pooled mode: don't close browser, pool manages it
             logger.info("=== REQUEST COMPLETE ===")
 
     def _select_mode(self, driver, model_name):

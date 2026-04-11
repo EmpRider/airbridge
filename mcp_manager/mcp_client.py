@@ -16,8 +16,9 @@ import httpx
 from mcp_manager.server_manager import (
     is_server_running,
     start_server_safe,
+    get_server_config,
     DEFAULT_HOST,
-    DEFAULT_PORT
+    DEFAULT_PORT,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,14 +32,16 @@ class MCPClient:
     - Auto-start server if not running (with file lock)
     - Register/unregister with server
     - Forward MCP JSON-RPC to HTTP
-    - Maintain backward compatibility
+    - Detect server/client config mismatch and warn the user
     """
 
     def __init__(
         self,
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
-        timeout: float = 600.0  # 10 minutes for browser automation
+        timeout: float = 600.0,  # 10 minutes for browser automation
+        server_kwargs: Optional[dict] = None,
+        expected_config: Optional[dict] = None,
     ):
         self.host = host
         self.port = port
@@ -46,6 +49,11 @@ class MCPClient:
         self.client_id = str(uuid.uuid4())
         self.http_client = httpx.AsyncClient(timeout=timeout)
         self.initialized = False
+        # Server kwargs used when auto-starting (forwarded on fallback too)
+        self.server_kwargs = server_kwargs or {}
+        # Key-value pairs the client *expects* the server to be running with,
+        # used to detect mismatches against /api/config.
+        self.expected_config = expected_config or {}
 
         logger.info(f"MCP client created: {self.client_id}")
 
@@ -54,20 +62,38 @@ class MCPClient:
 
         Multi-IDE safe:
         1. Check if server running
-        2. If not, start it (with file lock)
-        3. Register this client with server
+        2. If not, start it (forwarding CLI kwargs)
+        3. Compare server's live config with what we expect — warn on mismatch
+        4. Register this client with server
         """
         if self.initialized:
             return
 
         logger.info("Initializing MCP client...")
 
-        # Ensure server is running
+        # Ensure server is running (forward kwargs so headless/chrome-path survive)
         if not is_server_running(self.host, self.port):
-            logger.info("Server not running, starting it...")
-            start_server_safe(self.host, self.port)
+            logger.info("Server not running, starting it (forwarding CLI args)...")
+            start_server_safe(self.host, self.port, **self.server_kwargs)
         else:
             logger.info("Server already running")
+
+        # Config-mismatch detection — helps diagnose "my --no-headless was ignored"
+        if self.expected_config:
+            live_cfg = get_server_config(self.host, self.port)
+            mismatches = []
+            for key, want in self.expected_config.items():
+                have = live_cfg.get(key)
+                if have != want:
+                    mismatches.append(f"{key}: server={have!r}, client wants={want!r}")
+            if mismatches:
+                logger.warning(
+                    "Server config mismatch — the already-running server was started "
+                    "with different flags than this client's CLI args. "
+                    "Per-request overrides (e.g. headless in the query payload) will "
+                    "still be honored. Mismatches: %s",
+                    "; ".join(mismatches),
+                )
 
         # Register this client
         try:

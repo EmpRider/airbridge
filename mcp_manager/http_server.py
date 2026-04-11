@@ -1,12 +1,14 @@
 """
-HTTP Server - FastAPI server with browser pool integration.
+HTTP Server — FastAPI server with browser pool integration.
 
-Handles multiple IDE clients with client tracking and graceful shutdown.
+Handles multiple IDE clients with client tracking, graceful shutdown,
+and a /api/config endpoint so clients can detect settings mismatches.
 """
 import os
+import sys
 import asyncio
 import logging
-from typing import Optional, Set
+from typing import Optional, Set, Any, Dict
 from pathlib import Path
 from datetime import datetime
 
@@ -64,11 +66,33 @@ class HTTPServer:
         tab_idle_timeout: int = 300,
         browser_idle_timeout: int = 1800,
         lazy_spawn: bool = True,
-        pid_file: Optional[Path] = None
+        pid_file: Optional[Path] = None,
+        # Config snapshot so /api/config can surface the real state
+        default_headless: bool = True,
+        use_temp_chat: bool = True,
+        chrome_path: Optional[str] = None,
+        profile_dir: Optional[str] = None,
     ):
         self.host = host
         self.port = port
         self.pid_file = pid_file or Path.home() / ".web-proxy" / "server.pid"
+
+        # Snapshot the server config so clients can inspect it
+        self.config_snapshot: Dict[str, Any] = {
+            "host": host,
+            "port": port,
+            "max_browsers": max_browsers,
+            "max_tabs_per_browser": max_tabs_per_browser,
+            "tab_idle_timeout": tab_idle_timeout,
+            "browser_idle_timeout": browser_idle_timeout,
+            "lazy_spawn": lazy_spawn,
+            "default_headless": default_headless,
+            "use_temp_chat": use_temp_chat,
+            "chrome_path": chrome_path,
+            "profile_dir": profile_dir,
+            "pid": os.getpid(),
+            "started_at": datetime.utcnow().isoformat(),
+        }
 
         # Initialize browser pool
         self.browser_pool = BrowserPool(
@@ -76,7 +100,8 @@ class HTTPServer:
             max_tabs_per_browser=max_tabs_per_browser,
             tab_idle_timeout=tab_idle_timeout,
             browser_idle_timeout=browser_idle_timeout,
-            lazy_spawn=lazy_spawn
+            lazy_spawn=lazy_spawn,
+            default_headless=default_headless,
         )
 
         # Track connected clients
@@ -85,7 +110,7 @@ class HTTPServer:
         self.shutdown_task: Optional[asyncio.Task] = None
 
         # Create FastAPI app
-        self.app = FastAPI(title="MCP Browser Pool Server", version="1.0.0")
+        self.app = FastAPI(title="MCP Browser Pool Server", version="1.1.0")
 
         # Add CORS middleware (local only)
         self.app.add_middleware(
@@ -102,120 +127,103 @@ class HTTPServer:
         logger.info(f"HTTP server initialized on {host}:{port}")
 
     def _register_routes(self):
-        """Register FastAPI routes."""
-
         @self.app.on_event("startup")
         async def startup():
-            """Server startup handler."""
             logger.info("Server starting up...")
+            try:
+                self.pid_file.parent.mkdir(parents=True, exist_ok=True)
+                self.pid_file.write_text(str(os.getpid()))
+                logger.info(f"PID file written: {self.pid_file}")
+            except Exception as e:
+                # Write error to stderr so start_server_safe sees it
+                print(f"FATAL: Could not write PID file: {e}", file=sys.stderr, flush=True)
+                raise
 
-            # Write PID file
-            self.pid_file.parent.mkdir(parents=True, exist_ok=True)
-            self.pid_file.write_text(str(os.getpid()))
-            logger.info(f"PID file written: {self.pid_file}")
-
-            # Start browser pool
             await self.browser_pool.start()
-
             logger.info("Server startup complete")
 
         @self.app.on_event("shutdown")
         async def shutdown():
-            """Server shutdown handler."""
             logger.info("Server shutting down...")
-
-            # Stop browser pool
             await self.browser_pool.stop()
-
-            # Remove PID file
-            self.pid_file.unlink(missing_ok=True)
-            logger.info("PID file removed")
-
+            try:
+                self.pid_file.unlink(missing_ok=True)
+                logger.info("PID file removed")
+            except Exception as e:
+                logger.warning(f"Could not remove PID file: {e}")
             logger.info("Server shutdown complete")
 
         @self.app.get("/api/health", response_model=HealthResponse)
         async def health():
-            """Health check endpoint."""
             return HealthResponse(
                 status="ok",
-                timestamp=datetime.utcnow().isoformat()
+                timestamp=datetime.utcnow().isoformat(),
             )
+
+        @self.app.get("/api/config")
+        async def get_config():
+            """Return the server's active config so clients can detect mismatches."""
+            snapshot = dict(self.config_snapshot)
+            snapshot["browsers"] = self.browser_pool.describe_browsers()
+            snapshot["connected_clients"] = len(self.connected_clients)
+            return snapshot
 
         @self.app.get("/api/tasks")
         async def get_tasks():
-            """Get available tasks."""
             return get_available_tasks()
 
         @self.app.get("/api/stats", response_model=StatsResponse)
         async def get_stats():
-            """Get browser pool statistics."""
             pool_stats = self.browser_pool.get_stats()
-
             return StatsResponse(
                 browsers=pool_stats.total_browsers,
                 active_tabs=pool_stats.active_tabs,
                 queued_requests=pool_stats.queued_requests,
                 total_requests=pool_stats.total_requests_processed,
-                connected_clients=len(self.connected_clients)
+                connected_clients=len(self.connected_clients),
             )
 
         @self.app.post("/api/register-client")
         async def register_client(request: ClientRequest):
-            """Register a new IDE client."""
             async with self.client_lock:
                 self.connected_clients.add(request.client_id)
                 logger.info(
                     f"Client {request.client_id} registered. "
                     f"Total clients: {len(self.connected_clients)}"
                 )
-
-                # Cancel shutdown task if running
                 if self.shutdown_task and not self.shutdown_task.done():
                     self.shutdown_task.cancel()
                     logger.info("Cancelled delayed shutdown (new client connected)")
-
             return {"status": "registered", "client_id": request.client_id}
 
         @self.app.post("/api/unregister-client")
         async def unregister_client(request: ClientRequest):
-            """Unregister IDE client."""
             async with self.client_lock:
                 self.connected_clients.discard(request.client_id)
                 logger.info(
                     f"Client {request.client_id} unregistered. "
                     f"Remaining clients: {len(self.connected_clients)}"
                 )
-
-                # Schedule shutdown if no clients
                 if len(self.connected_clients) == 0:
                     logger.info("No clients connected. Shutting down in 5 minutes...")
                     self.shutdown_task = asyncio.create_task(self._delayed_shutdown(300))
-
             return {"status": "unregistered", "client_id": request.client_id}
 
         @self.app.post("/api/query", response_model=QueryResponse)
         async def query(request: QueryRequest):
-            """Handle query from IDE client."""
             try:
                 logger.info(
-                    f"Query request: task={request.task}, model={request.model}, "
-                    f"client={request.client_id}"
+                    f"Query: task={request.task}, model={request.model}, "
+                    f"headless={request.headless}, client={request.client_id}"
                 )
-
-                # Create adapter
                 adapter = create_adapter(request.task)
-
-                # Execute via browser pool
                 result = await self.browser_pool.execute_task(
                     adapter,
                     request.prompt,
                     request.model,
-                    chrome_path=request.chrome_path,
-                    headless=request.headless
+                    headless=request.headless,  # honored per-request now
                 )
-
                 return QueryResponse(result=result)
-
             except ValueError as e:
                 logger.error(f"Invalid request: {e}")
                 raise HTTPException(status_code=400, detail=str(e))
@@ -225,71 +233,45 @@ class HTTPServer:
 
         @self.app.post("/api/shutdown")
         async def shutdown_server():
-            """Graceful shutdown endpoint."""
             logger.info("Shutdown requested via API")
-
-            # Schedule immediate shutdown
             asyncio.create_task(self._delayed_shutdown(0))
-
             return {"status": "shutting down"}
 
     async def _delayed_shutdown(self, delay: int):
-        """Delayed shutdown after specified delay.
-
-        Args:
-            delay: Delay in seconds before shutdown
-        """
         try:
             if delay > 0:
                 logger.info(f"Waiting {delay}s before shutdown...")
                 await asyncio.sleep(delay)
 
-            # Check if clients reconnected
             async with self.client_lock:
                 if len(self.connected_clients) > 0:
                     logger.info(
-                        f"Shutdown cancelled - {len(self.connected_clients)} clients connected"
+                        f"Shutdown cancelled — {len(self.connected_clients)} clients connected"
                     )
                     return
 
             logger.info("Initiating server shutdown...")
-
-            # Trigger shutdown
             import signal
             os.kill(os.getpid(), signal.SIGTERM)
-
         except asyncio.CancelledError:
             logger.info("Delayed shutdown cancelled")
         except Exception as e:
             logger.error(f"Error during delayed shutdown: {e}", exc_info=True)
 
     def run(self):
-        """Run the HTTP server."""
-        import os
         logger.info(f"Starting HTTP server on {self.host}:{self.port}")
-
         uvicorn.run(
             self.app,
             host=self.host,
             port=self.port,
             log_level="info",
-            access_log=False  # Reduce noise
+            access_log=False,
         )
 
 
 def create_server(
     host: str = "127.0.0.1",
     port: int = 8765,
-    **kwargs
+    **kwargs,
 ) -> HTTPServer:
-    """Create HTTP server instance.
-
-    Args:
-        host: Server host
-        port: Server port
-        **kwargs: Additional arguments for HTTPServer
-
-    Returns:
-        HTTPServer instance
-    """
     return HTTPServer(host=host, port=port, **kwargs)
