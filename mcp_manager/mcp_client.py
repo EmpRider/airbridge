@@ -300,14 +300,6 @@ async def mcp_client_loop(client: MCPClient):
                                         "type": "string",
                                         "description": "The specific chat model to use.",
                                         "enum": ["Fast", "Thinking", "Pro"]
-                                    },
-                                    "chrome_path": {
-                                        "type": "string",
-                                        "description": "Optional: Absolute path to Chrome executable."
-                                    },
-                                    "headless": {
-                                        "type": "boolean",
-                                        "description": "Optional: Run browser invisibly."
                                     }
                                 },
                                 "required": ["prompt", "task", "model"]

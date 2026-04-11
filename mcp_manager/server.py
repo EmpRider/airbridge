@@ -77,14 +77,6 @@ def _build_tools_list():
                         "type": "string",
                         "description": "The specific chat model to use: 'Fast', 'Thinking', or 'Pro'. This determines which Gemini model variant will process your request.",
                         "enum": ["Fast", "Thinking", "Pro"]
-                    },
-                    "chrome_path": {
-                        "type": "string",
-                        "description": "Optional: Absolute path to Chrome executable."
-                    },
-                    "headless": {
-                        "type": "boolean",
-                        "description": "Optional: Run browser invisibly. Set to false if login is needed."
                     }
                 },
                 "required": ["prompt", "task", "model"]
