@@ -202,11 +202,6 @@ def main():
             server_kwargs = _build_server_kwargs(args)
             expected_config = _build_expected_config(args)
 
-            # Start the server if needed — forward all CLI kwargs
-            if not is_server_running(args.host, args.port):
-                logger.info("Server not running, starting with CLI arguments...")
-                start_server_safe(args.host, args.port, **server_kwargs)
-
             # Create MCP client — pass kwargs so the fallback restart can forward them too
             client = MCPClient(
                 host=args.host,

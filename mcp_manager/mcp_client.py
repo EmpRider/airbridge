@@ -140,6 +140,10 @@ class MCPClient:
             await self.initialize()
 
         try:
+            # Enforce client's expected config defaults if not explicitly provided in query
+            if headless is None and "default_headless" in self.expected_config:
+                headless = self.expected_config["default_headless"]
+
             response = await self.http_client.post(
                 f"{self.server_url}/api/query",
                 json={

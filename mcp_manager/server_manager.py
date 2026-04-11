@@ -46,11 +46,11 @@ def _read_lock_pid(lock_file: Path) -> Optional[int]:
 
 
 def _is_stale_lock(lock_file: Path) -> bool:
-    """A lock is stale if its owning PID is dead."""
+    """A lock is stale if its owning PID is dead or not our server."""
     pid = _read_lock_pid(lock_file)
     if pid is None:
         return True  # unreadable → treat as stale
-    if not psutil.pid_exists(pid):
+    if not psutil.pid_exists(pid) or not _pid_is_our_server(pid):
         return True
     return False
 

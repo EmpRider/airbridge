@@ -23,6 +23,7 @@ class BrowserSlot:
     active_tabs: Dict[str, float] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     request_count: int = 0
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass
@@ -54,6 +55,7 @@ class BrowserPool:
 
         self.browsers: List[BrowserSlot] = []
         self.lock = asyncio.Lock()
+        self.pending_spawns = set()
         self.total_requests = 0
         self._cleanup_task: Optional[asyncio.Task] = None
 
@@ -159,14 +161,15 @@ class BrowserPool:
             # adapter.process runs synchronously — dispatch to a thread.
             # Note: we do NOT pass headless to adapter.process — the browser
             # is already running in the requested mode.
-            result = await asyncio.to_thread(
-                adapter.process,
-                prompt,
-                model,
-                driver=browser_slot.browser,
-                tab_handle=tab_handle,
-                **kwargs,
-            )
+            async with browser_slot.lock:
+                result = await asyncio.to_thread(
+                    adapter.process,
+                    prompt,
+                    model,
+                    driver=browser_slot.browser,
+                    tab_handle=tab_handle,
+                    **kwargs,
+                )
 
             logger.info(f"Request {request_id}: completed")
             return result
@@ -186,6 +189,9 @@ class BrowserPool:
                     continue
                 if len(slot.active_tabs) >= self.max_tabs_per_browser:
                     continue
+                # We release the lock to create the tab to avoid blocking others
+                # but we keep the slot in mind. 
+                # Actually, for tabs it's fast, but spawns are slow.
                 try:
                     tab_handle = await self._create_new_tab(slot)
                     return slot, tab_handle
@@ -195,20 +201,32 @@ class BrowserPool:
                     )
                     continue
 
-            # Need a new browser — are we under the cap?
-            if len(self.browsers) < self.max_browsers:
+            # Need a new browser — check cap including pending spawns
+            if len(self.browsers) + len(self.pending_spawns) < self.max_browsers:
+                spawn_id = uuid.uuid4()
+                self.pending_spawns.add(spawn_id)
+                logger.info(f"Reserved spawn slot {spawn_id}")
+            else:
+                # At capacity. Try evicting if no matching browser exists
+                if not any(s.headless == headless for s in self.browsers):
+                    evicted = await self._try_evict_one()
+                    if evicted:
+                        spawn_id = uuid.uuid4()
+                        self.pending_spawns.add(spawn_id)
+                        logger.info(f"Reserved spawn slot {spawn_id} after eviction")
+                    else:
+                        spawn_id = None
+                else:
+                    spawn_id = None
+
+        if spawn_id:
+            try:
                 slot = await self._spawn_browser(headless)
                 tab_handle = await self._create_new_tab(slot)
                 return slot, tab_handle
-
-            # At capacity. If the request's mode has NO matching browser at all,
-            # we need to evict an idle mismatched browser to make room.
-            if not any(s.headless == headless for s in self.browsers):
-                evicted = await self._try_evict_one()
-                if evicted:
-                    slot = await self._spawn_browser(headless)
-                    tab_handle = await self._create_new_tab(slot)
-                    return slot, tab_handle
+            finally:
+                async with self.lock:
+                    self.pending_spawns.remove(spawn_id)
 
         # Pool is saturated with matching-mode browsers; wait for a slot.
         logger.info(

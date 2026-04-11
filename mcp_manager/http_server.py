@@ -108,6 +108,7 @@ class HTTPServer:
         self.connected_clients: Set[str] = set()
         self.client_lock = asyncio.Lock()
         self.shutdown_task: Optional[asyncio.Task] = None
+        self.shutdown_committed: bool = False
 
         # Create FastAPI app
         self.app = FastAPI(title="MCP Browser Pool Server", version="1.1.0")
@@ -186,6 +187,10 @@ class HTTPServer:
         @self.app.post("/api/register-client")
         async def register_client(request: ClientRequest):
             async with self.client_lock:
+                if self.shutdown_committed:
+                    logger.info(f"Client {request.client_id} tried to register during committed shutdown")
+                    raise HTTPException(status_code=503, detail="Server is shutting down")
+
                 self.connected_clients.add(request.client_id)
                 logger.info(
                     f"Client {request.client_id} registered. "
@@ -249,6 +254,7 @@ class HTTPServer:
                         f"Shutdown cancelled — {len(self.connected_clients)} clients connected"
                     )
                     return
+                self.shutdown_committed = True
 
             logger.info("Initiating server shutdown...")
             import signal
