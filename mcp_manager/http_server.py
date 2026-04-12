@@ -19,6 +19,7 @@ import uvicorn
 
 from mcp_manager.browser_pool import BrowserPool
 from mcp_manager.adapters.adapter_factory import get_available_tasks, create_adapter
+from mcp_manager.utils import sanitize_surrogates
 from mcp_manager.session_manager import (
     SessionManager,
     SessionError,
@@ -250,18 +251,23 @@ class HTTPServer:
         @self.app.post("/api/query", response_model=QueryResponse)
         async def query(request: QueryRequest):
             try:
+                # Sanitize all string inputs to remove lone surrogates
+                prompt = sanitize_surrogates(request.prompt)
+                task = sanitize_surrogates(request.task)
+                model = sanitize_surrogates(request.model)
+
                 logger.info(
-                    f"Query: task={request.task}, model={request.model}, "
+                    f"Query: task={task}, model={model}, "
                     f"headless={request.headless}, client={request.client_id}"
                 )
-                adapter = create_adapter(request.task)
+                adapter = create_adapter(task)
                 result = await self.browser_pool.execute_task(
                     adapter,
-                    request.prompt,
-                    request.model,
+                    prompt,
+                    model,
                     headless=request.headless,  # honored per-request now
                 )
-                return QueryResponse(result=result)
+                return QueryResponse(result=sanitize_surrogates(result))
             except ValueError as e:
                 logger.error(f"Invalid request: {e}")
                 raise HTTPException(status_code=400, detail=str(e))
@@ -274,7 +280,11 @@ class HTTPServer:
         @self.app.post("/api/session/start")
         async def session_start(req: StartSessionRequest):
             try:
-                adapter = create_adapter(req.task)
+                # Sanitize inputs
+                task = sanitize_surrogates(req.task)
+                model = sanitize_surrogates(req.model)
+
+                adapter = create_adapter(task)
                 effective_headless = (
                     self.config_snapshot["default_headless"]
                     if req.headless is None
@@ -282,8 +292,8 @@ class HTTPServer:
                 )
                 session = await self.session_manager.create_session(
                     adapter=adapter,
-                    task_name=req.task,
-                    model=req.model,
+                    task_name=task,
+                    model=model,
                     headless=effective_headless,
                     client_id=req.client_id,
                 )
@@ -301,10 +311,14 @@ class HTTPServer:
         @self.app.post("/api/session/{session_id}/message")
         async def session_message(session_id: str, req: SessionMessageRequest):
             try:
+                # Sanitize inputs
+                prompt = sanitize_surrogates(req.prompt)
+                model = sanitize_surrogates(req.model) if req.model else None
+
                 text = await self.session_manager.send_message(
-                    session_id, req.prompt, model=req.model
+                    session_id, prompt, model=model
                 )
-                return {"result": text, "session_id": session_id}
+                return {"result": sanitize_surrogates(text), "session_id": session_id}
             except SessionNotFound:
                 raise HTTPException(status_code=404, detail="session not found")
             except SessionDead as e:

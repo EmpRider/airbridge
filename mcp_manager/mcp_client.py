@@ -26,6 +26,13 @@ from mcp_manager.utils import sanitize_surrogates as _sanitize_surrogates
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_arg(value):
+    """Sanitize a string argument, passing through non-strings unchanged."""
+    if isinstance(value, str):
+        return _sanitize_surrogates(value)
+    return value
+
+
 class MCPClient:
     """MCP client that forwards requests to HTTP server.
 
@@ -560,9 +567,9 @@ async def mcp_client_loop(client: MCPClient):
                     }
 
                 elif tool_name == "send_quick_message":
-                    prompt = arguments.get("prompt", "")
-                    task_name = arguments.get("task", "")
-                    model = arguments.get("mode", "")
+                    prompt = _sanitize_arg(arguments.get("prompt", ""))
+                    task_name = _sanitize_arg(arguments.get("task", ""))
+                    model = _sanitize_arg(arguments.get("mode", ""))
                     chrome_path = arguments.get("chrome_path")
                     headless = arguments.get("headless")
 
@@ -592,8 +599,8 @@ async def mcp_client_loop(client: MCPClient):
                             }
 
                 elif tool_name == "start_chat_session":
-                    task_name = arguments.get("task", "")
-                    model = arguments.get("mode", "")
+                    task_name = _sanitize_arg(arguments.get("task", ""))
+                    model = _sanitize_arg(arguments.get("mode", ""))
                     headless = arguments.get("headless")
 
                     if not task_name:
@@ -632,10 +639,11 @@ async def mcp_client_loop(client: MCPClient):
                             }
 
                 elif tool_name == "send_chat_message":
-                    session_id = arguments.get("session_id", "")
-                    prompt = arguments.get("prompt", "")
+                    session_id = _sanitize_arg(arguments.get("session_id", ""))
+                    prompt = _sanitize_arg(arguments.get("prompt", ""))
                     turn_model = arguments.get("mode")  # optional
-                    elif not session_id:
+
+                    if not session_id:
                         response["error"] = {
                             "code": -32602,
                             "message": (
