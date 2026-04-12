@@ -5,11 +5,10 @@ Implements async execution with persistent session support for logins.
 import asyncio
 import logging
 from datetime import datetime
-from pathlib import Path
 
 from mcp_manager.adapters.base_adapter import BaseAdapter
-from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response
-from mcp_manager.browser import get_browser_config, CHROME_PROFILE_DIR
+from mcp_manager.browser import CHROME_PROFILE_DIR
+from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response, fast_input
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +41,8 @@ class GeminiAdapter(BaseAdapter):
             # Navigate to the URL from config with networkidle to minimize sleeps
             target_url = self.url
             logger.info(f"Navigating to {target_url}")
-            await page.goto(target_url, wait_until="networkidle")
+            await page.goto(target_url, wait_until="domcontentloaded")
+            await asyncio.sleep(3)
 
             # Check login requirement — only triggers on positive sign-in evidence
             needs_login = await self._needs_login(page)
@@ -64,7 +64,8 @@ class GeminiAdapter(BaseAdapter):
                 
                 logger.info("Login successful, reloading page...")
                 # Reload page to apply cookies
-                await page.goto(target_url, wait_until="networkidle")
+                await page.goto(target_url, wait_until="domcontentloaded")
+                await asyncio.sleep(2)
 
                 # Re-verify page state, waiting for the input field to be ready
                 input_field = await self._wait_for_input(page)
@@ -110,7 +111,7 @@ class GeminiAdapter(BaseAdapter):
             if USE_HUMAN_TYPING:
                 await human_type(input_field, prompt, TYPING_DELAY_MIN, TYPING_DELAY_MAX, TYPO_PROBABILITY)
             else:
-                await self._fast_input(page, input_field, prompt)
+                await fast_input(page, input_field, prompt)
 
             await random_delay(10, 50)
             await input_field.press("Enter")
@@ -154,7 +155,8 @@ class GeminiAdapter(BaseAdapter):
 
         target_url = self.url
         # networkidle to minimize explicit sleeps
-        await page.goto(target_url, wait_until="networkidle")
+        await page.goto(target_url, wait_until="domcontentloaded")
+        await asyncio.sleep(2)
 
         if await self._needs_login(page):
             logger.info("Login required at session start, delegating to login handler...")
@@ -168,7 +170,8 @@ class GeminiAdapter(BaseAdapter):
             if not success:
                 raise RuntimeError("Login failed at session start")
             # networkidle to minimize explicit sleeps
-            await page.goto(target_url, wait_until="networkidle")
+            await page.goto(target_url, wait_until="domcontentloaded")
+            await asyncio.sleep(2)
 
         # Confirm the chat is ready and input field is visible. This is a crucial,
         # non-blocking alternative to explicit asyncio.sleep.
@@ -237,7 +240,7 @@ class GeminiAdapter(BaseAdapter):
                 TYPING_DELAY_MIN, TYPING_DELAY_MAX, TYPO_PROBABILITY,
             )
         else:
-            await self._fast_input(page, input_field, prompt)
+            await fast_input(page, input_field, prompt)
 
         await random_delay(10, 50)
         await input_field.press("Enter")
@@ -289,19 +292,6 @@ class GeminiAdapter(BaseAdapter):
             logger.error(f"Input field not visible: {e}")
             return None
 
-    async def _handle_login(self, page, target_url):
-        """
-        Handle login requirement.
-        For now, we'll return an error asking the user to log in manually.
-        Future enhancement: implement persistent context switching.
-        """
-        logger.warning("Login required but automatic login not yet implemented in Playwright version")
-        return "ERROR: Login required. Please run the server with --no-headless flag and log in manually first."
-
-    async def _fast_input(self, page, input_field, text):
-        """Insert text instantly via keyboard API — no per-character delay."""
-        await input_field.click()
-        await page.keyboard.insert_text(text)
 
     async def _select_mode(self, page, model_name):
         """Select the specified chat model via the mode picker.

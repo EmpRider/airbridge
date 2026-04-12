@@ -3,8 +3,8 @@ Shared utilities for Playwright-based LLM adapters.
 Reusable across all adapters (Gemini, Claude, etc.)
 """
 import asyncio
-import random
 import logging
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,12 @@ async def random_delay(min_ms=1, max_ms=5):
     # uniform is more efficient than randint with division
     delay = random.uniform(min_ms / 1000, max_ms / 1000)
     await asyncio.sleep(delay)
+
+
+async def fast_input(page, input_field, text):
+    """Insert text instantly via keyboard API — no per-character delay."""
+    await input_field.click()
+    await page.keyboard.insert_text(text)
 
 
 async def get_element_count(page, selectors):
@@ -63,7 +69,8 @@ async def get_element_count(page, selectors):
         return 0
 
 
-async def wait_for_response(page, complete_selectors, container_selectors, initial_count, poll_interval=0.1, max_iterations=3600):
+async def wait_for_response(page, complete_selectors, container_selectors, initial_count, poll_interval=0.1,
+                            max_iterations=3600):
     """
     Wait for LLM response completion.
 
