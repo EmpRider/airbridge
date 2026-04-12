@@ -81,6 +81,9 @@ class GeminiAdapter(BaseAdapter):
             logger.info(f"Selecting model: {model}")
             await self._select_mode(page, model)
 
+            # Enable temp chat if configured (must happen after page is ready)
+            await self.enable_temp_chat(page)
+
             # Wait for input field
             logger.debug("Waiting for input field...")
             message_box_selectors = self.get_all_selectors("message-box")
@@ -99,7 +102,6 @@ class GeminiAdapter(BaseAdapter):
                 return "ERROR: Failed to locate input field. Check selectors in config.json."
 
             await random_delay(10, 50)
-            prompt = prompt.replace('\n', ' ').replace('\r', '')
 
             # Capture initial completion signal count BEFORE sending
             complete_selectors = self.get_all_selectors("response-complete")
@@ -183,6 +185,9 @@ class GeminiAdapter(BaseAdapter):
         logger.info(f"Selecting model for session: {model}")
         await self._select_mode(page, model)
 
+        # Enable temp chat if configured (must happen after page is ready)
+        await self.enable_temp_chat(page)
+
         complete_selectors = self.get_all_selectors("response-complete")
         initial_count = await get_element_count(page, complete_selectors)
 
@@ -229,8 +234,6 @@ class GeminiAdapter(BaseAdapter):
         baseline = int(state.get("last_complete_count", 0) or 0)
         actual = await get_element_count(page, complete_selectors)
         baseline = max(baseline, actual)
-
-        prompt = prompt.replace('\n', ' ').replace('\r', '')
 
         await random_delay(10, 50)
 
@@ -295,7 +298,7 @@ class GeminiAdapter(BaseAdapter):
 
     async def _select_mode(self, page, model_name):
         """Select the specified chat model via the mode picker.
-        
+
         Args:
             page: Playwright Page instance
             model_name: Name of the model to select ('Fast', 'Thinking', or 'Pro')

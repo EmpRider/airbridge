@@ -89,6 +89,12 @@ class LoginHandler:
             # Transfer cookies to target context
             await self._transfer_cookies(login_context, target_context)
 
+            # Update the golden profile so future pool contexts start authenticated
+            from mcp_manager.browser import copy_profile, CHROME_PROFILE_DIR, GOLDEN_PROFILE_DIR
+            login_profile_path = CHROME_PROFILE_DIR / profile_subdir
+            copy_profile(login_profile_path, GOLDEN_PROFILE_DIR)
+            logger.info("Golden profile updated from login session")
+
             # Close login context (session saved in persistent profile)
             await login_context.close()
             logger.info("Login context closed, session saved")
@@ -137,6 +143,12 @@ class LoginHandler:
                 logger.info("Valid saved session detected")
                 # Transfer cookies
                 await self._transfer_cookies(login_context, target_context)
+                # Keep golden profile up to date with the valid session
+                from mcp_manager.browser import copy_profile, CHROME_PROFILE_DIR, GOLDEN_PROFILE_DIR
+                login_cfg = config.get("login", {})
+                login_subdir = login_cfg.get("profile_subdir") if login_cfg else None
+                if login_subdir:
+                    copy_profile(CHROME_PROFILE_DIR / login_subdir, GOLDEN_PROFILE_DIR)
                 return True
 
             return False

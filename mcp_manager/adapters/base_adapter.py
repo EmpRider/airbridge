@@ -2,7 +2,11 @@
 Base adapter - Abstract interface for all LLM browser automation adapters.
 Every adapter (Gemini, Claude, etc.) must implement this contract.
 """
+import asyncio
+import logging
 from abc import ABC, abstractmethod
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAdapter(ABC):
@@ -84,6 +88,34 @@ class BaseAdapter(ABC):
         raise NotImplementedError(
             f"{self.__class__.__name__} does not support chat sessions"
         )
+
+    async def enable_temp_chat(self, page):
+        """Click the temp-chat toggle if the preference is enabled.
+
+        Uses the 'temp-chat' selectors from config. Safe to call from any
+        adapter — guards against double-toggle via aria-pressed.
+        """
+        from mcp_manager.browser import get_temp_chat_preference
+        if not get_temp_chat_preference():
+            return
+        selectors = self.get_all_selectors("temp-chat")
+        if not selectors:
+            logger.debug("No temp-chat selectors configured, skipping")
+            return
+        combined = ", ".join(selectors)
+        try:
+            btn = page.locator(combined).first
+            await btn.wait_for(state="visible", timeout=5000)
+            # Guard against double-toggle: check if already active
+            is_pressed = await btn.get_attribute("aria-pressed")
+            if is_pressed == "true":
+                logger.debug("Temp chat already active, skipping click")
+                return
+            await btn.click()
+            logger.info("Temp chat enabled")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.warning(f"Could not enable temp chat: {e}")
 
     def get_selector(self, key, fallback=None):
         """Get the first valid selector for a given key from the config."""

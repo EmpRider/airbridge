@@ -8,6 +8,7 @@ Design notes:
 import os
 import logging
 import asyncio
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 BASE_DIR = Path.home() / "web-proxy"
 CHROME_PROFILE_DIR = BASE_DIR / "playwright-profiles"
+GOLDEN_PROFILE_DIR = CHROME_PROFILE_DIR / "_golden"
 LOG_FILE = BASE_DIR / "gemini_mcp.log"
 
 BASE_DIR.mkdir(parents=True, exist_ok=True)
@@ -41,40 +43,47 @@ class BrowserConfig:
         self.profile_dir = Path(profile_dir) if profile_dir else CHROME_PROFILE_DIR
         self._playwright = None
         self._browser = None
+        # Add a lock to prevent concurrent redundant browser instantiations
+        self._lock = asyncio.Lock()
 
     async def get_browser(self):
         """Initialize and return the singleton Playwright browser instance."""
-        if self._browser is None:
-            self._playwright = await async_playwright().start()
-            launch_options = {
-                "headless": self.headless,
-                "args": ["--disable-blink-features=AutomationControlled"]
-            }
-            if self.chrome_path:
-                launch_options["executable_path"] = self.chrome_path
+        async with self._lock:
+            if self._playwright is None:
+                self._playwright = await async_playwright().start()
             
-            self._browser = await self._playwright.chromium.launch(**launch_options)
-            logger.info(f"Playwright browser launched (headless={self.headless})")
+            if self._browser is None:
+                launch_options = {
+                    "headless": self.headless,
+                    "args": ["--disable-blink-features=AutomationControlled"]
+                }
+                if self.chrome_path:
+                    launch_options["executable_path"] = self.chrome_path
+                    
+                self._browser = await self._playwright.chromium.launch(**launch_options)
+                logger.info(f"Playwright browser launched (headless={self.headless})")
+                
         return self._browser
 
     async def close_browser(self):
         """Gracefully shut down the browser and playwright instance."""
-        if self._browser:
-            await self._browser.close()
-            await self._playwright.stop()
-            self._browser = None
-            self._playwright = None
-            logger.info("Playwright browser shut down")
+        async with self._lock:
+            if self._browser:
+                await self._browser.close()
+                await self._playwright.stop()
+                self._browser = None
+                self._playwright = None
+                logger.info("Playwright browser shut down")
 
     async def create_context(self, profile_subdir: Optional[str] = None, headless_override: Optional[bool] = None):
         """
         Create an isolated browser context. 
         If profile_subdir is provided, uses a persistent context (for logins).
         """
-        # Ensure playwright is initialized
-        if self._playwright is None:
-            self._playwright = await async_playwright().start()
-        
+        async with self._lock:
+            if self._playwright is None:
+                self._playwright = await async_playwright().start()
+                
         if profile_subdir:
             user_data_dir = self.profile_dir / profile_subdir
             user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -88,7 +97,7 @@ class BrowserConfig:
             }
             if self.chrome_path:
                 launch_options["executable_path"] = self.chrome_path
-            
+                
             context = await self._playwright.chromium.launch_persistent_context(**launch_options)
             return context
         else:
@@ -132,3 +141,53 @@ def get_browser_config(chrome_path=None, headless=None, profile_dir=None):
 def reset_browser_config():
     global _browser_config
     _browser_config = None
+
+
+# ============================================================
+# GOLDEN PROFILE UTILITIES
+# ============================================================
+
+# Lock files that Chromium holds while running — skip during copy
+_LOCK_FILE_NAMES = {"SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"}
+
+
+def _is_lock_file(name: str) -> bool:
+    return name in _LOCK_FILE_NAMES or name.endswith(".lock")
+
+
+def _ignore_lock_files(directory, contents):
+    return [c for c in contents if _is_lock_file(c)]
+
+
+def golden_profile_exists() -> bool:
+    """Check if a golden profile with session data exists."""
+    if not GOLDEN_PROFILE_DIR.is_dir():
+        return False
+    # Must have at least some content (not just an empty dir)
+    return any(GOLDEN_PROFILE_DIR.iterdir())
+
+
+def copy_profile(src: Path, dst: Path):
+    """Copy a browser profile directory, skipping Chromium lock files."""
+    try:
+        if not src.is_dir():
+            logger.warning(f"Source profile does not exist: {src}")
+            return False
+        dst.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(str(src), str(dst), dirs_exist_ok=True, ignore=_ignore_lock_files)
+        logger.info(f"Profile copied: {src} -> {dst}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to copy profile {src} -> {dst}: {e}")
+        return False
+
+
+def cleanup_pool_profiles():
+    """Delete stale pool_* profile directories left from previous runs."""
+    try:
+        for entry in CHROME_PROFILE_DIR.iterdir():
+            if entry.is_dir() and entry.name.startswith("pool_"):
+                shutil.rmtree(str(entry), ignore_errors=True)
+                logger.debug(f"Cleaned up stale pool profile: {entry.name}")
+    except Exception as e:
+        logger.warning(f"Error during pool profile cleanup: {e}")

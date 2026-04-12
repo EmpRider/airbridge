@@ -11,9 +11,9 @@ from pathlib import Path
 
 from mcp_manager.browser import get_browser_config, LOG_FILE
 from mcp_manager.adapters.adapter_factory import get_available_tasks, create_adapter
+from mcp_manager.browser_pool import BrowserPool
 
 logger = logging.getLogger(__name__)
-
 
 def setup_logging(log_file=None):
     """Setup logging with file + stderr handlers."""
@@ -40,7 +40,6 @@ def log_json(prefix, data):
         logger.debug(f"{prefix}: {json.dumps(data, indent=2)}")
     except Exception:
         logger.debug(f"{prefix}: {data}")
-
 
 def _build_tools_list():
     """Build the MCP tools/list response dynamically from config."""
@@ -84,144 +83,156 @@ def _build_tools_list():
         }
     ]
 
+# Global stdout lock to ensure JSON-RPC responses do not interleave when processed concurrently
+_stdout_lock = asyncio.Lock()
 
-async def mcp_server():
-    """MCP JSON-RPC server loop reading from stdin, writing to stdout."""
-    logger.info("MCP server started (adapter architecture)")
+async def send_response(response):
+    """Thread-safe and async-safe stdout writing for JSON-RPC."""
+    async with _stdout_lock:
+        sys.stdout.write(json.dumps(response) + "\n")
+        sys.stdout.flush()
 
-    while True:
-        line = await asyncio.to_thread(sys.stdin.readline)
-        if not line:
-            logger.info("STDIN closed. Shutting down.")
-            break
+async def handle_request(req, pool):
+    """Handle a single JSON-RPC request concurrently."""
+    try:
+        log_json("REQUEST", req)
 
-        logger.debug(f"RAW INPUT: {line.strip()}")
+        req_id = req.get("id")
+        method = req.get("method")
 
-        try:
-            req = json.loads(line)
-            log_json("REQUEST", req)
+        response = {"jsonrpc": "2.0", "id": req_id}
 
-            req_id = req.get("id")
-            method = req.get("method")
+        # --- INITIALIZE ---
+        if method == "initialize":
+            response["result"] = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+                "serverInfo": {"name": "mcp-adapter-server", "version": "2.0.0"}
+            }
 
-            response = {"jsonrpc": "2.0", "id": req_id}
+        # --- TOOLS LIST ---
+        elif method == "tools/list":
+            response["result"] = {"tools": _build_tools_list()}
 
-            # --- INITIALIZE ---
-            if method == "initialize":
+        # --- RESOURCES & PROMPTS (EMPTY) ---
+        elif method in ("resources/list", "resources/templates/list", "prompts/list"):
+            key = method.split("/")[0]
+            if key == "resources" and "templates" in method:
+                response["result"] = {"resourceTemplates": []}
+            else:
+                response["result"] = {key: []}
+
+        # --- TOOL CALL ---
+        elif method == "tools/call":
+            params = req.get("params", {})
+            tool_name = params.get("name")
+            arguments = params.get("arguments", {})
+
+            logger.debug(f"Tool call: {tool_name}")
+            log_json("ARGS", arguments)
+
+            if tool_name == "get_available_tasks":
+                tasks = get_available_tasks()
                 response["result"] = {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
-                    "serverInfo": {"name": "mcp-adapter-server", "version": "2.0.0"}
+                    "content": [{"type": "text", "text": json.dumps(tasks, indent=2)}]
                 }
 
-            # --- TOOLS LIST ---
-            elif method == "tools/list":
-                response["result"] = {"tools": _build_tools_list()}
+            elif tool_name == "query_premium_model":
+                prompt = arguments.get("prompt", "")
+                task_name = arguments.get("task", "")
+                model = arguments.get("model", "")
+                chrome_path = arguments.get("chrome_path")
+                headless = arguments.get("headless")
 
-            # --- RESOURCES (EMPTY) ---
-            elif method == "resources/list":
-                response["result"] = {"resources": []}
-            elif method == "resources/templates/list":
-                response["result"] = {"resourceTemplates": []}
+                logger.info(f"Tool call parameters: task={task_name}, model={model}, chrome_path={chrome_path}, headless={headless}")
 
-            # --- PROMPTS (EMPTY) ---
-            elif method == "prompts/list":
-                response["result"] = {"prompts": []}
-
-            # --- TOOL CALL ---
-            elif method == "tools/call":
-                params = req.get("params", {})
-                tool_name = params.get("name")
-                arguments = params.get("arguments", {})
-
-                logger.debug(f"Tool call: {tool_name}")
-                log_json("ARGS", arguments)
-
-                if tool_name == "get_available_tasks":
-                    tasks = get_available_tasks()
-                    response["result"] = {
-                        "content": [{"type": "text", "text": json.dumps(tasks, indent=2)}]
+                if not task_name:
+                    response["error"] = {
+                        "code": -32602,
+                        "message": "Missing required parameter: 'task'. Call 'get_available_tasks' to see options."
                     }
-
-                elif tool_name == "query_premium_model":
-                    prompt = arguments.get("prompt", "")
-                    task_name = arguments.get("task", "")
-                    model = arguments.get("model", "")
-                    chrome_path = arguments.get("chrome_path")
-                    headless = arguments.get("headless")
-
-                    logger.info(f"Tool call parameters: task={task_name}, model={model}, chrome_path={chrome_path}, headless={headless}")
-
-                    if not task_name:
-                        response["error"] = {
-                            "code": -32602,
-                            "message": "Missing required parameter: 'task'. Call 'get_available_tasks' to see options."
-                        }
-                    elif not model:
-                        response["error"] = {
-                            "code": -32602,
-                            "message": "Missing required parameter: 'model'. Must be one of: 'Fast', 'Thinking', 'Pro'."
-                        }
-                    else:
-                        try:
-                            logger.info(f"Creating adapter for task: {task_name}")
-                            adapter = create_adapter(task_name)
-                            logger.info(f"Adapter created: {adapter}")
-                            
-                            # Import BrowserPool to execute task with proper page allocation
-                            from mcp_manager.browser_pool import BrowserPool
-                            from mcp_manager.browser import get_browser_config
-                            
-                            # Create a temporary pool for this request
-                            # In a production system, you'd want to share a pool instance
-                            temp_pool = BrowserPool(max_contexts=1, lazy_spawn=True)
-                            await temp_pool.start()
-                            
-                            try:
-                                output = await temp_pool.execute_task(
-                                    adapter,
-                                    prompt,
-                                    model,
-                                    headless=headless,
-                                    chrome_path=chrome_path
-                                )
-                                logger.info(f"Adapter.process() completed. Output length: {len(output)}")
-                                response["result"] = {
-                                    "content": [{"type": "text", "text": output}]
-                                }
-                            finally:
-                                await temp_pool.stop()
-                        except ValueError as e:
-                            logger.error(f"Adapter creation failed: {e}")
-                            response["error"] = {"code": -32602, "message": str(e)}
-                        except Exception as e:
-                            logger.error(f"Adapter execution failed: {e}", exc_info=True)
-                            response["error"] = {"code": -32603, "message": f"Adapter execution error: {str(e)}"}
-
+                elif not model:
+                    response["error"] = {
+                        "code": -32602,
+                        "message": "Missing required parameter: 'model'. Must be one of: 'Fast', 'Thinking', 'Pro'."
+                    }
                 else:
-                    response["error"] = {"code": -32601, "message": f"Tool not found: {tool_name}"}
+                    try:
+                        logger.info(f"Creating adapter for task: {task_name}")
+                        adapter = create_adapter(task_name)
+                        
+                        output = await pool.execute_task(
+                            adapter,
+                            prompt,
+                            model,
+                            headless=headless,
+                            chrome_path=chrome_path
+                        )
+                        logger.info(f"Adapter.process() completed. Output length: {len(output)}")
+                        response["result"] = {
+                            "content": [{"type": "text", "text": output}]
+                        }
+                    except ValueError as e:
+                        logger.error(f"Adapter creation failed: {e}")
+                        response["error"] = {"code": -32602, "message": str(e)}
+                    except Exception as e:
+                        logger.error(f"Adapter execution failed: {e}", exc_info=True)
+                        response["error"] = {"code": -32603, "message": f"Adapter execution error: {str(e)}"}
 
-            # --- NOTIFICATIONS (no response needed) ---
-            elif req_id is None:
-                continue
-
-            # --- UNKNOWN ---
             else:
-                response["result"] = {}
+                response["error"] = {"code": -32601, "message": f"Tool not found: {tool_name}"}
 
-            log_json("RESPONSE", response)
-            sys.stdout.write(json.dumps(response) + "\n")
-            sys.stdout.flush()
+        # --- NOTIFICATIONS (no response needed) ---
+        elif req_id is None:
+            return
 
-        except Exception as e:
-            logger.error(f"MCP ERROR: {e}", exc_info=True)
-            err = {
+        # --- UNKNOWN ---
+        else:
+            response["result"] = {}
+
+        log_json("RESPONSE", response)
+        await send_response(response)
+
+    except Exception as e:
+        logger.error(f"MCP ERROR in handle_request: {e}", exc_info=True)
+        if req.get("id"):
+            await send_response({
                 "jsonrpc": "2.0",
-                "id": req.get("id") if 'req' in locals() else None,
+                "id": req.get("id"),
                 "error": {"code": -32603, "message": str(e)}
-            }
-            sys.stdout.write(json.dumps(err) + "\n")
-            sys.stdout.flush()
+            })
+
+
+async def mcp_server():
+    """MCP JSON-RPC server loop reading from stdin, processing concurrently."""
+    logger.info("MCP server started (adapter architecture)")
+
+    # Share a single pool instance across all requests to massively improve performance
+    pool = BrowserPool(max_contexts=5, lazy_spawn=True)
+    await pool.start()
+
+    try:
+        while True:
+            line = await asyncio.to_thread(sys.stdin.readline)
+            if not line:
+                logger.info("STDIN closed. Shutting down.")
+                break
+
+            logger.debug(f"RAW INPUT: {line.strip()}")
+
+            try:
+                req = json.loads(line)
+                # Dispatch the task concurrently so the server can handle multiple rapid RPC calls
+                asyncio.create_task(handle_request(req, pool))
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON input: {e}")
+                await send_response({
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error"}
+                })
+    finally:
+        await pool.stop()
 
 
 def parse_args():
@@ -244,7 +255,6 @@ EXAMPLES:
     parser.add_argument("--use-temp-chat", action="store_true", default=True, help="Use temporary chat mode (default: True)")
     parser.add_argument("--no-temp-chat", action="store_true", help="Disable temporary chat mode")
     return parser.parse_args()
-
 
 def main():
     """Entry point for the MCP server."""

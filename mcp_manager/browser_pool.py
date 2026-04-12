@@ -5,6 +5,7 @@ Each slot represents an isolated BrowserContext (not a full browser process).
 Contexts are natively thread-safe and can execute in parallel without locks.
 """
 import asyncio
+import shutil
 import time
 import logging
 import uuid
@@ -19,7 +20,7 @@ class BrowserSlot:
     """Represents an isolated browser context with its page."""
     context: any  # Playwright BrowserContext
     page: any  # Playwright Page
-    context_id: int
+    context_id: str  # Modified to support strict UUIDs
     headless: bool
     created_at: float = field(default_factory=time.time)
     request_count: int = 0
@@ -57,6 +58,10 @@ class BrowserPool:
         self._pending_spawns = 0
 
     async def start(self):
+        # Clean up stale pool profile directories from previous runs/crashes
+        from mcp_manager.browser import cleanup_pool_profiles
+        cleanup_pool_profiles()
+
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info("Browser pool started")
 
@@ -199,6 +204,7 @@ class BrowserPool:
                 logger.error(
                     f"Failed closing dedicated context {slot.context_id}: {e}"
                 )
+            self._cleanup_pool_profile(slot.context_id)
 
     async def _get_available_slot(self, headless: bool) -> BrowserSlot:
         """Find or create a context slot matching the requested headless mode.
@@ -210,8 +216,8 @@ class BrowserPool:
             should_spawn = False
             
             async with self.lock:
-                # 1. Try to find a warm, ready context immediately
-                for slot in self.contexts:
+                # Iterate over a shallow copy to safely mutate self.contexts internally if closed
+                for slot in list(self.contexts):
                     if slot.dedicated:
                         continue
                     if slot.headless == headless:
@@ -222,10 +228,11 @@ class BrowserPool:
                             slot.request_count += 1
                             return slot
                         except Exception as e:
-                            # Context is closed, remove it from pool
+                            # Context is closed, remove it from pool safely
                             logger.warning(f"Context {slot.context_id} is closed, removing from pool: {e}")
-                            self.contexts.remove(slot)
-                            break
+                            if slot in self.contexts:
+                                self.contexts.remove(slot)
+                            # Do not break here so we can keep looking for other warm slots
                 
                 # 2. Check if we have room to spawn
                 total_projected = len(self.contexts) + self._pending_spawns
@@ -287,21 +294,51 @@ class BrowserPool:
         except Exception as e:
             logger.error(f"Failed to cleanly close context {slot.context_id}: {e}")
 
-    async def _spawn_context(self, headless: bool) -> BrowserSlot:
-        """Spawn a new browser context. Does NOT hold the lock. Performs raw I/O."""
-        # Use uuid or timestamp for ID since we aren't under lock
-        context_id = id(self) + int(time.time() * 1000) 
-        
+        # Clean up the pool profile directory on disk
+        self._cleanup_pool_profile(slot.context_id)
+
+    def _cleanup_pool_profile(self, context_id: str):
+        """Remove the pool_<id> profile directory from disk."""
         try:
-            from mcp_manager.browser import get_browser_config
+            from mcp_manager.browser import CHROME_PROFILE_DIR
+            pool_dir = CHROME_PROFILE_DIR / f"pool_{context_id}"
+            if pool_dir.is_dir():
+                shutil.rmtree(str(pool_dir), ignore_errors=True)
+                logger.debug(f"Cleaned up pool profile: pool_{context_id}")
+        except Exception as e:
+            logger.warning(f"Failed to clean up pool profile pool_{context_id}: {e}")
+
+    async def _spawn_context(self, headless: bool) -> BrowserSlot:
+        """Spawn a new browser context. Does NOT hold the lock. Performs raw I/O.
+
+        If a golden profile exists (from a previous login), copies it into a
+        unique pool subfolder and launches a persistent context so that
+        cookies/session data are available immediately.  Otherwise falls back
+        to an ephemeral context.
+        """
+        context_id = uuid.uuid4().hex
+
+        try:
+            from mcp_manager.browser import (
+                get_browser_config, golden_profile_exists,
+                copy_profile, GOLDEN_PROFILE_DIR, CHROME_PROFILE_DIR,
+            )
 
             config = get_browser_config()
-            # Use ephemeral context for resource efficiency
-            # Session data will be transferred via cookies when needed
-            context = await config.create_context(headless_override=headless)
-            
-            # Get or create a page from the context
-            # Ephemeral contexts need a page created
+
+            if golden_profile_exists():
+                pool_subdir = f"pool_{context_id}"
+                pool_profile_path = CHROME_PROFILE_DIR / pool_subdir
+                copy_profile(GOLDEN_PROFILE_DIR, pool_profile_path)
+                context = await config.create_context(
+                    profile_subdir=pool_subdir,
+                    headless_override=headless,
+                )
+                context_type = "persistent (golden)"
+            else:
+                context = await config.create_context(headless_override=headless)
+                context_type = "ephemeral"
+
             pages = context.pages
             if pages:
                 page = pages[0]
@@ -314,7 +351,7 @@ class BrowserPool:
                 context_id=context_id,
                 headless=headless,
             )
-            logger.info(f"Context {context_id} spawned (headless={headless}) - ephemeral")
+            logger.info(f"Context {context_id} spawned (headless={headless}) - {context_type}")
             return slot
 
         except Exception as e:
