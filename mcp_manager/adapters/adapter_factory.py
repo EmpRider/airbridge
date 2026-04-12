@@ -55,18 +55,66 @@ def _auto_register():
 _auto_register()
 
 
-def get_available_tasks(config_path=None):
+def _resolve_task(config, task_name):
+    """Look up a task and merge its adapter config into a single dict.
+
+    Returns (adapter_name, merged_config) where merged_config contains
+    all adapter-level fields (url, selectors, login, models, ...) plus
+    the task-level overrides (adapter, description).
     """
-    Return the list of available tasks from config.json.
-    Each task includes its name, adapter, and description.
+    tasks = config.get("tasks", {})
+    if task_name not in tasks:
+        available = ", ".join(tasks.keys())
+        raise ValueError(f"Unknown task '{task_name}'. Available tasks: {available}")
+
+    task_entry = tasks[task_name]
+    adapter_name = task_entry.get("adapter")
+    if not adapter_name:
+        raise ValueError(f"Task '{task_name}' has no 'adapter' field")
+
+    adapters = config.get("adapters", {})
+    adapter_cfg = adapters.get(adapter_name)
+    if adapter_cfg is None:
+        available = ", ".join(adapters.keys())
+        raise ValueError(
+            f"Adapter '{adapter_name}' referenced by task '{task_name}' "
+            f"not found in adapters config. Available: {available}"
+        )
+
+    # Merge: adapter config is the base, task-level fields override
+    merged = {**adapter_cfg, **task_entry}
+    return adapter_name, merged
+
+
+def get_available_tasks(config_path=None):
+    """Return available tasks in a structure ready for the MCP tool response.
+
+    Shape::
+
+        {
+            "<task_name>": {
+                "description": "...",
+                "modes": [
+                    {"name": "Fast", "description": "..."},
+                    ...
+                ]
+            }
+        }
     """
     config = load_config(config_path)
-    tasks = config.get("task", {})
+    tasks = config.get("tasks", {})
+    adapters = config.get("adapters", {})
     result = {}
-    for task_name, task_config in tasks.items():
+    for task_name, task_entry in tasks.items():
+        adapter_name = task_entry.get("adapter", "unknown")
+        adapter_cfg = adapters.get(adapter_name, {})
+        modes = adapter_cfg.get("modes", [])
         result[task_name] = {
-            "adapter": task_config.get("adapter", "unknown"),
-            "description": task_config.get("description", "")
+            "description": task_entry.get("description", ""),
+            "modes": [
+                {"name": m["name"], "description": m["description"]}
+                for m in modes
+            ],
         }
     return result
 
@@ -74,6 +122,9 @@ def get_available_tasks(config_path=None):
 def create_adapter(task_name, config_path=None):
     """
     Create an adapter instance for the given task name.
+
+    Resolves the task's adapter reference, merges the adapter config
+    from the ``adapters`` section, and instantiates the adapter class.
 
     Args:
         task_name: The task key from config.json (e.g. "thinking")
@@ -83,20 +134,13 @@ def create_adapter(task_name, config_path=None):
         BaseAdapter: An instantiated adapter ready to process prompts
     """
     config = load_config(config_path)
-    tasks = config.get("task", {})
-
-    if task_name not in tasks:
-        available = ", ".join(tasks.keys())
-        raise ValueError(f"Unknown task '{task_name}'. Available tasks: {available}")
-
-    task_config = tasks[task_name]
-    adapter_name = task_config.get("adapter")
+    adapter_name, merged_config = _resolve_task(config, task_name)
 
     if adapter_name not in _ADAPTER_REGISTRY:
         registered = ", ".join(_ADAPTER_REGISTRY.keys())
         raise ValueError(f"No adapter registered for '{adapter_name}'. Registered: {registered}")
 
     adapter_class = _ADAPTER_REGISTRY[adapter_name]
-    adapter = adapter_class(task_name, task_config)
+    adapter = adapter_class(task_name, merged_config)
     logger.info(f"Created adapter: {adapter}")
     return adapter

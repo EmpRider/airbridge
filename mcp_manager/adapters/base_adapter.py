@@ -23,7 +23,31 @@ class BaseAdapter(ABC):
         self.adapter_name = task_config.get("adapter", "unknown")
         self.description = task_config.get("description", "")
         self.url = task_config.get("url", "")
-        self.selectors = task_config.get("selectors", {})
+        self.selectors = self._flatten_selectors(task_config.get("selectors", {}))
+
+    @staticmethod
+    def _flatten_selectors(selectors_config):
+        """Flatten grouped selectors into a single lookup dict.
+
+        Supports both the new grouped format::
+
+            {"input": {"message-box": [...]}, "output": {"response-container": [...]}}
+
+        and the legacy flat format::
+
+            {"message-box": [...], "response-container": [...]}
+
+        Returns a flat dict like ``{"message-box": [...], "response-container": [...]}``.
+        """
+        flat = {}
+        for key, value in selectors_config.items():
+            if isinstance(value, dict):
+                # Grouped category — merge its children
+                flat.update(value)
+            else:
+                # Legacy flat entry (value is a list of selector strings)
+                flat[key] = value
+        return flat
 
     @abstractmethod
     async def process(self, prompt, model, page=None, **kwargs):

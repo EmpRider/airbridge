@@ -11,8 +11,19 @@ from typing import List, Union
 logger = logging.getLogger(__name__)
 
 
+def sanitize_surrogates(text: str) -> str:
+    """Replace lone surrogates that are invalid in UTF-8.
+
+    Browser automation can scrape text containing unpaired surrogates
+    (e.g. \\udc8f) which cause 'surrogates not allowed' when encoding
+    to UTF-8 or serializing to JSON.
+    """
+    return text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+
+
 async def human_type(locator, text: str, min_delay: float = 0.0001, max_delay: float = 0.0005, typo_prob: float = 0.0001):
     """Type text with human-like delays and occasional typos."""
+    text = sanitize_surrogates(text)
     for i, char in enumerate(text):
         delay = random.uniform(min_delay, max_delay)
         if random.random() < typo_prob and i > 0:
@@ -34,6 +45,7 @@ async def random_delay(min_ms: int = 1, max_ms: int = 5):
 
 async def fast_input(page, input_field, text: str):
     """Insert text instantly via keyboard API — no per-character delay."""
+    text = sanitize_surrogates(text)
     await input_field.click()
     await page.keyboard.insert_text(text)
 
@@ -137,6 +149,7 @@ async def wait_for_response(page, complete_selectors: List[str], container_selec
         """, container_selectors)
 
         if response:
+            response = sanitize_surrogates(response)
             logger.info(f"Response extracted: {len(response)} characters")
             return response
         else:

@@ -12,6 +12,7 @@ from pathlib import Path
 from mcp_manager.browser import get_browser_config, LOG_FILE
 from mcp_manager.adapters.adapter_factory import get_available_tasks, create_adapter
 from mcp_manager.browser_pool import BrowserPool
+from mcp_manager.utils import sanitize_surrogates
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +46,29 @@ def _build_tools_list():
     """Build the MCP tools/list response dynamically from config."""
     tasks = get_available_tasks()
     task_names = list(tasks.keys())
-    task_descriptions = ", ".join(f"'{k}' ({v['adapter']}): {v['description']}" for k, v in tasks.items())
+
+    # Collect all unique mode names across tasks
+    all_mode_names = []
+    for t in tasks.values():
+        for m in t.get("modes", []):
+            if m["name"] not in all_mode_names:
+                all_mode_names.append(m["name"])
+
+    task_descriptions = ", ".join(
+        f"'{k}': {v['description']}" for k, v in tasks.items()
+    )
+    mode_descriptions = ", ".join(
+        f"'{m['name']}': {m['description']}"
+        for m in next(iter(tasks.values()), {}).get("modes", [])
+    )
 
     return [
         {
             "name": "get_available_tasks",
-            "description": "Returns a JSON object listing all supported task types. Call this first to discover which tasks are available before calling query_premium_model.",
+            "description": (
+                "Returns a JSON object listing all supported tasks "
+                "and their available modes with descriptions."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -59,7 +77,12 @@ def _build_tools_list():
         },
         {
             "name": "query_premium_model",
-            "description": f"Submits a prompt to a premium LLM via stealth browser automation. You MUST specify a 'task' parameter to select the target adapter and a 'model' parameter to select the specific chat model. Available tasks: {task_descriptions}. Use 'get_available_tasks' to discover options dynamically.",
+            "description": (
+                "Submits a prompt to a premium LLM via browser automation. "
+                "You MUST specify a 'task' and a 'mode'. "
+                f"\n\nAvailable tasks: {task_descriptions}."
+                f"\n\nAvailable modes: {mode_descriptions}."
+            ),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -69,16 +92,16 @@ def _build_tools_list():
                     },
                     "task": {
                         "type": "string",
-                        "description": f"Which task/model to use. One of: {task_names}",
+                        "description": f"Which task to use. One of: {task_names}",
                         "enum": task_names
                     },
-                    "model": {
+                    "mode": {
                         "type": "string",
-                        "description": "The specific chat model to use: 'Fast', 'Thinking', or 'Pro'. This determines which Gemini model variant will process your request.",
-                        "enum": ["Fast", "Thinking", "Pro"]
+                        "description": "The chat mode to use.",
+                        "enum": all_mode_names
                     }
                 },
-                "required": ["prompt", "task", "model"]
+                "required": ["prompt", "task", "mode"]
             }
         }
     ]
@@ -140,11 +163,11 @@ async def handle_request(req, pool):
             elif tool_name == "query_premium_model":
                 prompt = arguments.get("prompt", "")
                 task_name = arguments.get("task", "")
-                model = arguments.get("model", "")
+                model = arguments.get("mode", "")
                 chrome_path = arguments.get("chrome_path")
                 headless = arguments.get("headless")
 
-                logger.info(f"Tool call parameters: task={task_name}, model={model}, chrome_path={chrome_path}, headless={headless}")
+                logger.info(f"Tool call parameters: task={task_name}, mode={model}, chrome_path={chrome_path}, headless={headless}")
 
                 if not task_name:
                     response["error"] = {
@@ -154,7 +177,7 @@ async def handle_request(req, pool):
                 elif not model:
                     response["error"] = {
                         "code": -32602,
-                        "message": "Missing required parameter: 'model'. Must be one of: 'Fast', 'Thinking', 'Pro'."
+                        "message": "Missing required parameter: 'mode'. Call 'get_available_tasks' to see options."
                     }
                 else:
                     try:
@@ -170,7 +193,7 @@ async def handle_request(req, pool):
                         )
                         logger.info(f"Adapter.process() completed. Output length: {len(output)}")
                         response["result"] = {
-                            "content": [{"type": "text", "text": output}]
+                            "content": [{"type": "text", "text": sanitize_surrogates(output)}]
                         }
                     except ValueError as e:
                         logger.error(f"Adapter creation failed: {e}")

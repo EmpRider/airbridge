@@ -21,6 +21,8 @@ from mcp_manager.server_manager import (
     DEFAULT_PORT,
 )
 
+from mcp_manager.utils import sanitize_surrogates as _sanitize_surrogates
+
 logger = logging.getLogger(__name__)
 
 
@@ -359,16 +361,32 @@ async def mcp_client_loop(client: MCPClient):
             elif method == "tools/list":
                 tasks = await client.get_tasks()
                 task_names = list(tasks.keys())
+
+                # Collect all unique mode names across tasks
+                all_mode_names = []
+                for t in tasks.values():
+                    for m in t.get("modes", []):
+                        if m["name"] not in all_mode_names:
+                            all_mode_names.append(m["name"])
+
+                # Build a concise summary for tool descriptions
                 task_descriptions = ", ".join(
-                    f"'{k}' ({v['adapter']}): {v['description']}"
+                    f"'{k}': {v['description']}"
                     for k, v in tasks.items()
+                )
+                mode_descriptions = ", ".join(
+                    f"'{m['name']}': {m['description']}"
+                    for m in next(iter(tasks.values()), {}).get("modes", [])
                 )
 
                 response["result"] = {
                     "tools": [
                         {
                             "name": "get_available_tasks",
-                            "description": "Returns a JSON object listing all supported task types.",
+                            "description": (
+                                "Returns a JSON object listing all supported tasks "
+                                "and their available modes with descriptions."
+                            ),
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {},
@@ -385,7 +403,8 @@ async def mcp_client_loop(client: MCPClient):
                                 "If you need multi-turn conversation where the model should remember prior "
                                 "turns (iterative refinement, follow-up questions, step-by-step collaboration), "
                                 "use start_chat_session + send_chat_message instead. "
-                                f"Available tasks: {task_descriptions}."
+                                f"\n\nAvailable tasks: {task_descriptions}."
+                                f"\n\nAvailable modes: {mode_descriptions}."
                             ),
                             "inputSchema": {
                                 "type": "object",
@@ -396,16 +415,16 @@ async def mcp_client_loop(client: MCPClient):
                                     },
                                     "task": {
                                         "type": "string",
-                                        "description": f"Which task/model to use. One of: {task_names}",
+                                        "description": f"Which task to use. One of: {task_names}",
                                         "enum": task_names
                                     },
-                                    "model": {
+                                    "mode": {
                                         "type": "string",
-                                        "description": "The specific chat model to use.",
-                                        "enum": ["Fast", "Thinking", "Pro"]
+                                        "description": "The chat mode to use.",
+                                        "enum": all_mode_names
                                     }
                                 },
-                                "required": ["prompt", "task", "model"]
+                                "required": ["prompt", "task", "mode"]
                             }
                         },
                         {
@@ -420,35 +439,35 @@ async def mcp_client_loop(client: MCPClient):
                                 "the content of turn N-1, or when you are running a multi-step problem-solving "
                                 "loop with the model. "
                                 "\n\nDO NOT USE for one-off questions — use send_quick_message instead. "
-                                "\n\nThe 'model' argument sets the INITIAL mode (Fast/Thinking/Pro). You can "
-                                "change mode for individual later turns by passing a different 'model' to "
-                                "send_chat_message — the conversation history persists across mode switches, "
-                                "so you can use Fast for quick follow-ups and Pro for hard reasoning steps "
-                                "inside the same chat. "
+                                "\n\nThe 'mode' argument sets the INITIAL mode. You can change mode for "
+                                "individual later turns by passing a different 'mode' to send_chat_message — "
+                                "the conversation history persists across mode switches, so you can use Fast "
+                                "for quick follow-ups and Pro for hard reasoning steps inside the same chat. "
                                 "\n\nCRITICAL: You MUST call end_chat_session when the conversation is done. "
                                 "Each open session holds an exclusive browser slot; leaving them open starves "
                                 "capacity. Sessions auto-expire after 15 minutes of idle time, but you should "
                                 "end them explicitly as soon as you no longer need the context. "
                                 f"\n\nAvailable tasks: {task_descriptions}."
+                                f"\n\nAvailable modes: {mode_descriptions}."
                             ),
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "task": {
                                         "type": "string",
-                                        "description": f"Which task/model to use. One of: {task_names}",
+                                        "description": f"Which task to use. One of: {task_names}",
                                         "enum": task_names
                                     },
-                                    "model": {
+                                    "mode": {
                                         "type": "string",
                                         "description": (
-                                            "The initial chat model for this session. Can be overridden "
-                                            "per-message later via send_chat_message's 'model' argument."
+                                            "The initial chat mode for this session. Can be overridden "
+                                            "per-message later via send_chat_message's 'mode' argument."
                                         ),
-                                        "enum": ["Fast", "Thinking", "Pro"]
+                                        "enum": all_mode_names
                                     }
                                 },
-                                "required": ["task", "model"]
+                                "required": ["task", "mode"]
                             }
                         },
                         {
@@ -459,12 +478,11 @@ async def mcp_client_loop(client: MCPClient):
                                 "\n\nYou MUST pass the session_id that was returned by start_chat_session. "
                                 "Using an unknown/expired session_id returns an error — in that case, start a "
                                 "new session with start_chat_session. "
-                                "\n\nThe optional 'model' argument lets you switch the chat mode "
-                                "(Fast/Thinking/Pro) for THIS TURN ONWARD while keeping the conversation "
-                                "history intact. Use it to match cognition budget to difficulty: Fast for "
-                                "simple follow-ups or clarifications, Thinking for moderate reasoning, Pro "
-                                "for the hardest steps. If you omit 'model', the current session mode is "
-                                "kept — you do NOT need to pass 'model' every turn. "
+                                "\n\nThe optional 'mode' argument lets you switch the chat mode for THIS TURN "
+                                "ONWARD while keeping the conversation history intact. Use it to match "
+                                "cognition budget to difficulty: Fast for simple follow-ups, Thinking for "
+                                "moderate reasoning, Pro for the hardest steps. If you omit 'mode', the "
+                                "current session mode is kept — you do NOT need to pass 'mode' every turn. "
                                 "\n\nIf this call returns an error mentioning 'session is dead', 'login "
                                 "expired', or 'page closed', the session is gone and cannot be recovered — "
                                 "you must open a fresh one with start_chat_session."
@@ -483,15 +501,14 @@ async def mcp_client_loop(client: MCPClient):
                                         "type": "string",
                                         "description": "The next message to send in the conversation."
                                     },
-                                    "model": {
+                                    "mode": {
                                         "type": "string",
                                         "description": (
-                                            "Optional per-turn mode override. If set, switches the Gemini "
-                                            "mode picker to this model before sending and keeps it for "
-                                            "subsequent turns until changed again. Omit to keep the current "
-                                            "session mode."
+                                            "Optional per-turn mode override. If set, switches the mode "
+                                            "picker before sending and keeps it for subsequent turns until "
+                                            "changed again. Omit to keep the current session mode."
                                         ),
-                                        "enum": ["Fast", "Thinking", "Pro"]
+                                        "enum": all_mode_names
                                     }
                                 },
                                 "required": ["session_id", "prompt"]
@@ -545,7 +562,7 @@ async def mcp_client_loop(client: MCPClient):
                 elif tool_name == "send_quick_message":
                     prompt = arguments.get("prompt", "")
                     task_name = arguments.get("task", "")
-                    model = arguments.get("model", "")
+                    model = arguments.get("mode", "")
                     chrome_path = arguments.get("chrome_path")
                     headless = arguments.get("headless")
 
@@ -557,7 +574,7 @@ async def mcp_client_loop(client: MCPClient):
                     elif not model:
                         response["error"] = {
                             "code": -32602,
-                            "message": "Missing required parameter: 'model'"
+                            "message": "Missing required parameter: 'mode'"
                         }
                     else:
                         try:
@@ -565,7 +582,7 @@ async def mcp_client_loop(client: MCPClient):
                                 prompt, task_name, model, chrome_path, headless
                             )
                             response["result"] = {
-                                "content": [{"type": "text", "text": result}]
+                                "content": [{"type": "text", "text": _sanitize_surrogates(result)}]
                             }
                         except Exception as e:
                             logger.error(f"Query failed: {e}", exc_info=True)
@@ -576,7 +593,7 @@ async def mcp_client_loop(client: MCPClient):
 
                 elif tool_name == "start_chat_session":
                     task_name = arguments.get("task", "")
-                    model = arguments.get("model", "")
+                    model = arguments.get("mode", "")
                     headless = arguments.get("headless")
 
                     if not task_name:
@@ -587,7 +604,7 @@ async def mcp_client_loop(client: MCPClient):
                     elif not model:
                         response["error"] = {
                             "code": -32602,
-                            "message": "Missing required parameter: 'model'"
+                            "message": "Missing required parameter: 'mode'"
                         }
                     else:
                         try:
@@ -596,7 +613,7 @@ async def mcp_client_loop(client: MCPClient):
                             # back out of its own context window.
                             text = json.dumps(info, indent=2)
                             response["result"] = {
-                                "content": [{"type": "text", "text": text}]
+                                "content": [{"type": "text", "text": _sanitize_surrogates(text)}]
                             }
                         except httpx.HTTPStatusError as e:
                             code = e.response.status_code
@@ -617,16 +634,7 @@ async def mcp_client_loop(client: MCPClient):
                 elif tool_name == "send_chat_message":
                     session_id = arguments.get("session_id", "")
                     prompt = arguments.get("prompt", "")
-                    turn_model = arguments.get("model")  # optional
-
-                    if turn_model is not None and turn_model not in ("Fast", "Thinking", "Pro"):
-                        response["error"] = {
-                            "code": -32602,
-                            "message": (
-                                f"Invalid 'model': {turn_model!r}. "
-                                "Must be one of: 'Fast', 'Thinking', 'Pro'."
-                            ),
-                        }
+                    turn_model = arguments.get("mode")  # optional
                     elif not session_id:
                         response["error"] = {
                             "code": -32602,
@@ -646,7 +654,7 @@ async def mcp_client_loop(client: MCPClient):
                                 session_id, prompt, model=turn_model
                             )
                             response["result"] = {
-                                "content": [{"type": "text", "text": text}]
+                                "content": [{"type": "text", "text": _sanitize_surrogates(text)}]
                             }
                         except httpx.HTTPStatusError as e:
                             code = e.response.status_code
