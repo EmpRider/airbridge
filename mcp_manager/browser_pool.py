@@ -23,6 +23,7 @@ class BrowserSlot:
     headless: bool
     created_at: float = field(default_factory=time.time)
     request_count: int = 0
+    dedicated: bool = False  # True when pinned to a Session; hidden from rotation
 
 
 @dataclass
@@ -51,11 +52,9 @@ class BrowserPool:
         self.lock = asyncio.Lock()
         self.total_requests = 0
         self._cleanup_task: Optional[asyncio.Task] = None
-
-        logger.info(
-            f"Browser pool initialized: max_contexts={max_contexts}, "
-            f"lazy_spawn={lazy_spawn}, default_headless={default_headless}"
-        )
+        
+        # Track pending spawns so we don't exceed max_contexts while unlocked
+        self._pending_spawns = 0
 
     async def start(self):
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
@@ -73,11 +72,11 @@ class BrowserPool:
 
         async with self.lock:
             for slot in self.contexts:
+                # Add timeout to stop hanging the shutdown process
                 try:
-                    await slot.context.close()
-                    logger.info(f"Closed context {slot.context_id}")
+                    await asyncio.wait_for(slot.context.close(), timeout=3.0)
                 except Exception as e:
-                    logger.error(f"Error closing context {slot.context_id}: {e}")
+                    logger.error(f"Error closing context {slot.context_id} during shutdown: {e}")
             self.contexts.clear()
 
         logger.info("Browser pool stopped")
@@ -134,73 +133,165 @@ class BrowserPool:
         finally:
             await self._release_slot(context_slot)
 
-    async def _get_available_slot(self, headless: bool) -> BrowserSlot:
-        """Find or create a context slot matching the requested headless mode."""
+    async def acquire_dedicated(self, headless: bool) -> BrowserSlot:
+        """Pull a fresh slot for exclusive use by a chat session.
+
+        The returned slot is marked .dedicated=True and is invisible to
+        _get_available_slot, _try_evict_one, and the idle cleanup loop until
+        release_dedicated() is called.
+        """
+        """Optimized to spawn without holding the main lock."""
+        should_spawn = False
+        
         async with self.lock:
-            # Look for an existing matching-mode context that's still valid
-            for slot in self.contexts:
-                if slot.headless == headless:
-                    # Check if context is still open
-                    try:
-                        # Try to access the context to verify it's still valid
-                        _ = slot.context.pages
-                        slot.request_count += 1
-                        return slot
-                    except Exception as e:
-                        # Context is closed, remove it from pool
-                        logger.warning(f"Context {slot.context_id} is closed, removing from pool: {e}")
-                        self.contexts.remove(slot)
-                        break
+            total_projected = len(self.contexts) + self._pending_spawns
+            if total_projected >= self.max_contexts:
+                evicted = await self._try_evict_one_locked(skip_dedicated=True)
+                if not evicted:
+                    raise RuntimeError(
+                        f"Pool at capacity ({self.max_contexts}) with no "
+                        "evictable rotation slots; cannot dedicate a slot."
+                    )
+        
+            # Reserve our spot
+            self._pending_spawns += 1
+            should_spawn = True
 
-            # Need a new context — check capacity
-            if len(self.contexts) < self.max_contexts:
-                slot = await self._spawn_context(headless)
-                return slot
-
-            # At capacity. Try evicting an idle mismatched context
-            if not any(s.headless == headless for s in self.contexts):
-                evicted = await self._try_evict_one()
-                if evicted:
-                    slot = await self._spawn_context(headless)
-                    return slot
-
-        # Pool is saturated; wait for a slot
-        logger.info(
-            f"All {self.max_contexts} contexts busy, "
-            f"waiting for headless={headless} slot..."
-        )
-        while True:
-            await asyncio.sleep(0.5)
-            async with self.lock:
-                for slot in self.contexts:
-                    if slot.headless == headless:
-                        slot.request_count += 1
-                        logger.info("Context became available")
-                        return slot
-
-    async def _try_evict_one(self) -> bool:
-        """Evict the oldest idle context. Caller holds self.lock."""
-        if not self.contexts:
-            return False
-        # Oldest first
-        self.contexts.sort(key=lambda s: s.created_at)
-        victim = self.contexts[0]
+        # SPAWN OUTSIDE THE LOCK - Allows concurrent requests to hit existing warm contexts
         try:
-            await victim.context.close()
-            self.contexts.remove(victim)
-            logger.info(
-                f"Evicted idle context {victim.context_id} (headless={victim.headless})"
-            )
-            return True
-        except Exception as e:
-            logger.error(f"Eviction failed: {e}")
+            slot = await self._spawn_context(headless)
+            slot.dedicated = True
+            
+            # Re-acquire lock just to append state
+            async with self.lock:
+                self.contexts.append(slot)
+                self._pending_spawns -= 1
+            return slot
+        except Exception:
+            async with self.lock:
+                self._pending_spawns -= 1
+            raise
+
+    async def release_dedicated(self, slot: BrowserSlot, close: bool = True):
+        """Release a session-owned slot.
+
+        If close=True (the default and typical case), the browser context is
+        torn down. If close=False, the slot is demoted to a regular rotation
+        slot and can be reused by one-shot traffic.
+        """
+        # State mutation inside lock
+        async with self.lock:
+            if close and slot in self.contexts:
+                self.contexts.remove(slot)
+            elif not close:
+                slot.dedicated = False
+                logger.info(
+                    f"Context {slot.context_id} demoted from dedicated to rotation"
+                )
+                return
+
+        # I/O teardown OUTSIDE lock with timeout
+        if close:
+            try:
+                await asyncio.wait_for(slot.context.close(), timeout=5.0)
+                logger.info(f"Closed dedicated context {slot.context_id}")
+            except Exception as e:
+                logger.error(
+                    f"Failed closing dedicated context {slot.context_id}: {e}"
+                )
+
+    async def _get_available_slot(self, headless: bool) -> BrowserSlot:
+        """Find or create a context slot matching the requested headless mode.
+
+        Dedicated slots (owned by a Session) are invisible to this path.
+        """
+        # Loop until we secure a slot
+        while True:
+            should_spawn = False
+            
+            async with self.lock:
+                # 1. Try to find a warm, ready context immediately
+                for slot in self.contexts:
+                    if slot.dedicated:
+                        continue
+                    if slot.headless == headless:
+                        # Check if context is still open
+                        try:
+                            # Try to access the context to verify it's still valid
+                            _ = slot.context.pages
+                            slot.request_count += 1
+                            return slot
+                        except Exception as e:
+                            # Context is closed, remove it from pool
+                            logger.warning(f"Context {slot.context_id} is closed, removing from pool: {e}")
+                            self.contexts.remove(slot)
+                            break
+                
+                # 2. Check if we have room to spawn
+                total_projected = len(self.contexts) + self._pending_spawns
+                if total_projected < self.max_contexts:
+                    self._pending_spawns += 1
+                    should_spawn = True
+                else:
+                    # 3. Try to evict an idle one to make room
+                    non_dedicated = [s for s in self.contexts if not s.dedicated]
+                    if non_dedicated and not any(
+                        s.headless == headless and not s.dedicated for s in self.contexts
+                    ):
+                        evicted = await self._try_evict_one_locked(skip_dedicated=True)
+                        if evicted:
+                            self._pending_spawns += 1
+                            should_spawn = True
+
+            # Perform the slow I/O out of the lock
+            if should_spawn:
+                try:
+                    slot = await self._spawn_context(headless)
+                    async with self.lock:
+                        self.contexts.append(slot)
+                        self._pending_spawns -= 1
+                        slot.request_count += 1
+                    return slot
+                except Exception:
+                    async with self.lock:
+                        self._pending_spawns -= 1
+                    raise
+
+            # If we couldn't spawn and no context is ready, wait and retry
+            await asyncio.sleep(0.5)
+
+    async def _try_evict_one_locked(self, skip_dedicated: bool = True) -> bool:
+        """Evict the oldest idle context. Assumes lock is already held. Only mutates state, defers I/O."""
+        candidates = [
+            s for s in self.contexts
+            if not (skip_dedicated and s.dedicated)
+        ]
+        if not candidates:
             return False
+            
+        candidates.sort(key=lambda s: s.created_at)
+        victim = candidates[0]
+        
+        # Remove from state immediately so it's out of rotation
+        self.contexts.remove(victim)
+        
+        # Fire-and-forget the closing task so we don't hold up the lock waiting for Playwright
+        asyncio.create_task(self._safe_close_context(victim))
+        return True
+
+    async def _safe_close_context(self, slot: BrowserSlot):
+        """Helper to cleanly close a context with a strict timeout."""
+        try:
+            await asyncio.wait_for(slot.context.close(), timeout=5.0)
+            logger.info(f"Evicted/Closed context {slot.context_id}")
+        except Exception as e:
+            logger.error(f"Failed to cleanly close context {slot.context_id}: {e}")
 
     async def _spawn_context(self, headless: bool) -> BrowserSlot:
-        """Spawn a new browser context. Caller holds self.lock."""
-        context_id = (max((s.context_id for s in self.contexts), default=0) or 0) + 1
-        logger.info(f"Spawning context {context_id} (headless={headless})...")
-
+        """Spawn a new browser context. Does NOT hold the lock. Performs raw I/O."""
+        # Use uuid or timestamp for ID since we aren't under lock
+        context_id = id(self) + int(time.time() * 1000) 
+        
         try:
             from mcp_manager.browser import get_browser_config
 
@@ -223,12 +314,11 @@ class BrowserPool:
                 context_id=context_id,
                 headless=headless,
             )
-            self.contexts.append(slot)
             logger.info(f"Context {context_id} spawned (headless={headless}) - ephemeral")
             return slot
 
         except Exception as e:
-            logger.error(f"Failed to spawn context {context_id}: {e}", exc_info=True)
+            logger.error(f"Failed to spawn context: {e}", exc_info=True)
             raise
 
     async def _release_slot(self, slot: BrowserSlot):
@@ -252,24 +342,25 @@ class BrowserPool:
             logger.error(f"Cleanup loop error: {e}", exc_info=True)
 
     async def _cleanup_idle_resources(self):
-        """Close idle contexts that exceed the idle timeout."""
+        """Close idle contexts that exceed the idle timeout.
+
+        Dedicated (session-owned) slots are never cleaned up by this loop —
+        the SessionManager owns their lifecycle.
+        """
         current_time = time.time()
+        to_remove = []
 
         async with self.lock:
-            to_remove = [
-                s for s in self.contexts
-                if (current_time - s.created_at) > self.context_idle_timeout
-            ]
+            for slot in self.contexts:
+                if not slot.dedicated and (current_time - slot.created_at) > self.context_idle_timeout:
+                    to_remove.append(slot)
+                    
             for slot in to_remove:
-                try:
-                    await slot.context.close()
-                    self.contexts.remove(slot)
-                    logger.info(
-                        f"Closed idle context {slot.context_id} "
-                        f"(idle for {int(current_time - slot.created_at)}s)"
-                    )
-                except Exception as e:
-                    logger.error(f"Error closing context {slot.context_id}: {e}")
+                self.contexts.remove(slot)
+
+        # Do the heavy closing outside the lock with timeouts
+        for slot in to_remove:
+            await self._safe_close_context(slot)
 
     def get_stats(self) -> PoolStats:
         return PoolStats(
@@ -284,6 +375,7 @@ class BrowserPool:
             {
                 "id": s.context_id,
                 "headless": s.headless,
+                "dedicated": s.dedicated,
                 "request_count": s.request_count,
                 "age_seconds": int(time.time() - s.created_at),
             }

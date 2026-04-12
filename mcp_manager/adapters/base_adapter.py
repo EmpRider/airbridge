@@ -37,6 +37,54 @@ class BaseAdapter(ABC):
         """
         pass
 
+    # ---- Multi-turn chat session support (optional for subclasses) ----
+
+    async def start_session(self, page, model):
+        """Bring a page to a state where send_in_session can be called repeatedly.
+
+        Subclasses should: navigate to the chat URL, handle login once, select
+        the model once, wait for the input field, and capture whatever baseline
+        state (e.g. a response-element count) send_in_session needs.
+
+        Args:
+            page: Playwright Page instance pinned to this session
+            model: Model variant to lock in for the session lifetime
+
+        Returns:
+            dict: Opaque per-session state. The SessionManager stores this and
+                  passes it back into send_in_session unchanged. Adapters may
+                  mutate it in place from send_in_session.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support chat sessions"
+        )
+
+    async def send_in_session(self, page, prompt, state, model=None):
+        """Send one turn inside an already-initialized session page.
+
+        Must NOT renavigate or re-login. MAY switch the chat mode if `model`
+        is provided and differs from the session's current model — the
+        adapter is responsible for updating `state["model"]` when it does.
+        Must update `state` in place so the next turn has the correct
+        baseline counts.
+
+        Args:
+            page: The session's pinned Playwright Page
+            prompt: The user's next message
+            state: The dict returned by start_session (mutated in place)
+            model: Optional per-turn model override. If None, keep the
+                   current session model. If set and different from
+                   state["model"], the adapter switches the UI mode picker
+                   before sending.
+
+        Returns:
+            str: Response text, or a sentinel starting with "LOGIN_EXPIRED"
+                 if authentication was lost mid-session.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support chat sessions"
+        )
+
     def get_selector(self, key, fallback=None):
         """Get the first valid selector for a given key from the config."""
         selectors = self.selectors.get(key, [])

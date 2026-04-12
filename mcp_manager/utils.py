@@ -25,7 +25,8 @@ async def human_type(locator, text, min_delay=0.0001, max_delay=0.0005, typo_pro
 
 async def random_delay(min_ms=1, max_ms=5):
     """Add a random delay to simulate human behavior."""
-    delay = random.randint(min_ms, max_ms) / 1000
+    # uniform is more efficient than randint with division
+    delay = random.uniform(min_ms / 1000, max_ms / 1000)
     await asyncio.sleep(delay)
 
 
@@ -64,9 +65,11 @@ async def get_element_count(page, selectors):
 
 async def wait_for_response(page, complete_selectors, container_selectors, initial_count, poll_interval=0.1, max_iterations=3600):
     """
-    Wait for LLM response completion by monitoring element count changes.
+    Wait for LLM response completion.
 
-    Stage 1: Poll until the count of 'complete_selectors' exceeds initial_count.
+    Stage 1: Use Playwright's native `wait_for_function` to wait until the count
+             of 'complete_selectors' exceeds initial_count, executing the check
+             in the browser for maximum efficiency.
     Stage 2: Extract the text from the last 'container_selectors' element.
 
     Args:
@@ -74,35 +77,45 @@ async def wait_for_response(page, complete_selectors, container_selectors, initi
         complete_selectors: CSS selectors for the completion signal element
         container_selectors: CSS selectors for the response text container
         initial_count: Element count captured before the prompt was sent
-        poll_interval: Seconds between polls
-        max_iterations: Max polls before timeout
+        poll_interval: Seconds between polls (converted to ms for Playwright)
+        max_iterations: Max polls before timeout (used to calculate timeout in ms)
 
     Returns:
         str: The response text from the new element
     """
-    iterations = 0
-    logger.info(f"Waiting for completion signal (initial count: {initial_count})...")
+    # Calculate timeout and polling in milliseconds
+    timeout_ms = int(max_iterations * poll_interval * 1000)
+    polling_ms = int(poll_interval * 1000)
 
-    # Stage 1: Wait for completion signal count to increase
-    while iterations < max_iterations:
-        current_count = await get_element_count(page, complete_selectors)
+    # JavaScript expression to run in the browser
+    # Reuses the robust counting logic and then applies the baseline check.
+    js_condition = f"""() => {{
+        var selectors = [{', '.join(f'"{s}"' for s in complete_selectors)}];
+        for (var i = 0; i < selectors.length; i++) {{
+            var els = document.querySelectorAll(selectors[i]);
+            if (els.length > 0) {{
+                return els.length > {initial_count};
+            }}
+        }}
+        return false;
+    }}"""
 
-        if current_count > initial_count:
-            logger.info(f"Completion signal detected after {iterations} polls (count: {initial_count} -> {current_count})")
-            break
+    logger.info(f"Waiting for completion signal (initial count: {initial_count}, timeout: {timeout_ms}ms)...")
 
-        if iterations % 10 == 0 and iterations > 0:
-            logger.debug(f"Still waiting... poll #{iterations}, count still {current_count}")
-
-        await asyncio.sleep(poll_interval)
-        iterations += 1
-    else:
-        logger.warning(f"Response timeout after {max_iterations} polls")
+    try:
+        # Wait for the condition to be true in the browser context
+        await page.wait_for_function(js_condition, polling=polling_ms, timeout=timeout_ms)
+        logger.info("Completion signal detected")
+    except asyncio.TimeoutError:
+        logger.warning(f"Response timeout after {timeout_ms}ms")
         return "TIMEOUT: Response took longer than expected"
+    except Exception as e:
+        logger.error(f"Error waiting for completion signal: {e}")
+        return f"ERROR: {str(e)}"
 
     # Stage 2: Extract text from the last response container
     try:
-        js_script = f"""
+        js_extract_script = f"""
             () => {{
                 var selectors = [{', '.join(f'"{s}"' for s in container_selectors)}];
                 for (var i = 0; i < selectors.length; i++) {{
@@ -114,7 +127,7 @@ async def wait_for_response(page, complete_selectors, container_selectors, initi
                 return null;
             }}
         """
-        response = await page.evaluate(js_script)
+        response = await page.evaluate(js_extract_script)
 
         if response:
             logger.info(f"Response extracted: {len(response)} characters")

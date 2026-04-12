@@ -19,6 +19,12 @@ import uvicorn
 
 from mcp_manager.browser_pool import BrowserPool
 from mcp_manager.adapters.adapter_factory import get_available_tasks, create_adapter
+from mcp_manager.session_manager import (
+    SessionManager,
+    SessionError,
+    SessionNotFound,
+    SessionDead,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +58,18 @@ class StatsResponse(BaseModel):
     queued_requests: int
     total_requests: int
     connected_clients: int
+
+
+class StartSessionRequest(BaseModel):
+    task: str
+    model: str
+    client_id: Optional[str] = None
+    headless: Optional[bool] = None
+
+
+class SessionMessageRequest(BaseModel):
+    prompt: str
+    model: Optional[str] = None  # optional per-turn override; None keeps current
 
 
 class HTTPServer:
@@ -102,6 +120,13 @@ class HTTPServer:
             default_headless=default_headless,
         )
 
+        # Multi-turn chat session manager (sits on top of the pool)
+        self.session_manager = SessionManager(
+            browser_pool=self.browser_pool,
+            idle_timeout=900,           # 15 minutes
+            max_sessions=max_browsers,  # never out-compete one-shot capacity
+        )
+
         # Track connected clients
         self.connected_clients: Set[str] = set()
         self.client_lock = asyncio.Lock()
@@ -139,11 +164,13 @@ class HTTPServer:
                 raise
 
             await self.browser_pool.start()
+            await self.session_manager.start()
             logger.info("Server startup complete")
 
         @self.app.on_event("shutdown")
         async def shutdown():
             logger.info("Server shutting down...")
+            await self.session_manager.stop()
             await self.browser_pool.stop()
             try:
                 self.pid_file.unlink(missing_ok=True)
@@ -210,6 +237,14 @@ class HTTPServer:
                 if len(self.connected_clients) == 0:
                     logger.info("No clients connected. Shutting down in 5 minutes...")
                     self.shutdown_task = asyncio.create_task(self._delayed_shutdown(300))
+
+            # Reap any sessions that belonged to this client — outside client_lock
+            try:
+                await self.session_manager.end_sessions_for_client(request.client_id)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to reap sessions for {request.client_id}: {e}"
+                )
             return {"status": "unregistered", "client_id": request.client_id}
 
         @self.app.post("/api/query", response_model=QueryResponse)
@@ -233,6 +268,66 @@ class HTTPServer:
             except Exception as e:
                 logger.error(f"Query failed: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=str(e))
+
+        # ---------------- Chat session endpoints ----------------
+
+        @self.app.post("/api/session/start")
+        async def session_start(req: StartSessionRequest):
+            try:
+                adapter = create_adapter(req.task)
+                effective_headless = (
+                    self.config_snapshot["default_headless"]
+                    if req.headless is None
+                    else bool(req.headless)
+                )
+                session = await self.session_manager.create_session(
+                    adapter=adapter,
+                    task_name=req.task,
+                    model=req.model,
+                    headless=effective_headless,
+                    client_id=req.client_id,
+                )
+                return {"session_id": session.id, **session.info()}
+            except SessionError as e:
+                logger.warning(f"Session start rejected: {e}")
+                raise HTTPException(status_code=429, detail=str(e))
+            except ValueError as e:
+                logger.error(f"Invalid session start: {e}")
+                raise HTTPException(status_code=400, detail=str(e))
+            except Exception as e:
+                logger.error(f"Session start failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/api/session/{session_id}/message")
+        async def session_message(session_id: str, req: SessionMessageRequest):
+            try:
+                text = await self.session_manager.send_message(
+                    session_id, req.prompt, model=req.model
+                )
+                return {"result": text, "session_id": session_id}
+            except SessionNotFound:
+                raise HTTPException(status_code=404, detail="session not found")
+            except SessionDead as e:
+                # 410 Gone — client should create a new session
+                raise HTTPException(status_code=410, detail=str(e))
+            except Exception as e:
+                logger.error(f"Session message failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/api/session/{session_id}/end")
+        async def session_end(session_id: str):
+            try:
+                await self.session_manager.end_session(session_id)
+                return {"status": "ended", "session_id": session_id}
+            except SessionNotFound:
+                raise HTTPException(status_code=404, detail="session not found")
+            except Exception as e:
+                logger.error(f"Session end failed: {e}", exc_info=True)
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.get("/api/sessions")
+        async def sessions_list():
+            return {"sessions": self.session_manager.list_sessions()}
 
         @self.app.post("/api/shutdown")
         async def shutdown_server():
