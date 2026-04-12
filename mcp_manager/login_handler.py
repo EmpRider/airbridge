@@ -142,7 +142,7 @@ class LoginHandler:
             return False
 
         except Exception as e:
-            logger.debug(f"Error checking saved cookies: {e}")
+            logger.warning(f"Error checking saved cookies: {e}")
             return False
 
     async def _wait_for_login(

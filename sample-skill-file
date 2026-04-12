@@ -1,0 +1,116 @@
+---
+name: escalate-to-premium
+description: >-
+  Standardized workflow for escalating tasks to the premium reasoning model via
+  the query_premium_model MCP tools (get_available_tasks, start_chat_session, send_chat_message, end_chat_session, send_quick_message). Packages file context into a structured payload,
+  enforces strict XML extraction rules on the response, and applies code changes
+  automatically. Triggers: /escalate, escalate to premium, ask gemini, premium
+  model, premium reasoning, hand off to gemini, MCP escalation.
+---
+
+# Escalate to Premium
+
+**Slash command:** `/escalate [optional specific instructions]`
+
+## When to use
+
+- You need to hand off a complex reasoning or code-generation task to the premium model (Gemini) via the query_premium_model MCP tools (get_available_tasks, start_chat_session, send_chat_message, end_chat_session, send_quick_message).
+- You want to guarantee that the payload is perfectly formatted and that the strict XML extraction rules are enforced on the response.
+- You are working in the Orchestrator mode (or any mode with MCP access) and need a standardized escalation workflow.
+- The user explicitly types `/escalate` or asks you to "escalate to premium".
+
+## When NOT to use
+
+- The task is simple enough to solve locally without premium model assistance.
+- The query_premium_model MCP tools are not configured or available in the current environment.
+- The user has not requested escalation and you are not in a situation that warrants it.
+
+## Inputs required
+
+1. **User objective** — the overarching goal or problem to solve.
+2. **Specific instructions** (optional) — any extra directives passed with the `/escalate` command.
+3. **Relevant file context** — contents of files recently read or directly relevant to the objective.
+
+## Workflow
+
+**Step 1: Context Packaging**
+
+Gather the contents of all files you have recently read or that are directly relevant to the user's current objective.
+
+**Step 2: Payload Construction**
+
+You must construct a highly structured prompt to send to the query_premium_model MCP tools. Your payload MUST follow this exact template:
+
+```
+=== PAYLOAD TEMPLATE START ===
+You are the Premium Reasoning Agent. I am the local orchestrator. I need you to solve the following objective.
+
+**Objective:**
+[Insert the user's overarching goal, plus any specific instructions passed with the /escalate command]
+
+**File Context:**
+[Insert the gathered file contents here]
+
+**CRITICAL OUTPUT INSTRUCTIONS:**
+1. You must think step-by-step about the architecture or logic required.
+2. BEFORE writing any code, verify ALL dependencies:
+   - If your solution requires functions, modules, or imports that are NOT visible in the provided file context, you MUST request them.
+   - If you need to modify multiple files but only have context for some of them, you MUST request the missing files.
+   - DO NOT assume or hallucinate that code exists elsewhere. When in doubt, ask for more context.
+3. If you do not have enough file context to confidently solve this, reply EXACTLY with: `NEED_MORE_DATA: [List the specific files or information you need]`.
+4. When you write your final code solution:
+   - For SINGLE file updates, use:
+     <roo_response_block>
+     [YOUR RAW CODE HERE]
+     </roo_response_block>
+   - For MULTIPLE file updates, use:
+     <roo_response_block file="path/to/first/file.ext">
+     [FIRST FILE RAW CODE]
+     </roo_response_block>
+     <roo_response_block file="path/to/second/file.ext">
+     [SECOND FILE RAW CODE]
+     </roo_response_block>
+   - Do NOT use markdown backticks inside these blocks.
+   - Include the complete file contents, not just the changed portions.
+=== PAYLOAD TEMPLATE END ===
+```
+
+**Step 3: Execution and Extraction**
+
+1. Send the constructed payload to the query_premium_model MCP tools.
+2. Wait for the response.
+3. If the response contains `NEED_MORE_DATA`, use your local tools to find the requested information, then call the MCP tools ONCE with ALL gathered context (including previously gathered files). Do NOT iterate multiple times; gather all needed files and call once. Maximum 1 additional call after initial gathering.
+4. If the response contains a `<roo_response_block>`, you must IGNORE all text outside of the tags. Extract ONLY the code inside the tags and use your `write_to_file` or `apply_diff` tools to apply it immediately.
+5. Summarize what was changed for the user.
+
+## Examples
+
+### Example 1: Basic escalation
+
+**User says:** `/escalate Refactor the authentication module to use JWT tokens`
+
+**Agent action:**
+1. Gathers contents of auth-related files (e.g., `auth.ts`, `middleware.ts`, `config.ts`).
+2. Constructs the payload using the template above, inserting the objective and file contents.
+3. Sends to the query_premium_model MCP tools.
+4. Extracts code from `<roo_response_block>` in the response.
+5. Applies changes via `write_to_file` or `apply_diff`.
+6. Summarizes the refactoring for the user.
+
+### Example 2: NEED_MORE_DATA handling
+
+**Agent sends payload** → **Gemini responds:** `NEED_MORE_DATA: [src/types.ts, src/database/schema.ts]`
+
+**Agent action:**
+1. Reads `src/types.ts` and `src/database/schema.ts` using local tools.
+2. Calls the MCP tools ONCE with ALL gathered context (including previously gathered files).
+3. Extracts and applies the final code from `<roo_response_block>`.
+
+## Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| Query premium model MCP tools not found | Verify the MCP server is configured in your MCP settings. |
+| Response has no `<roo_response_block>` | The premium model may have failed to follow the output format. Re-send the payload with the CRITICAL OUTPUT INSTRUCTIONS emphasized. |
+| `NEED_MORE_DATA` loop repeats more than 2 times (initial + 1 additional call) | Stop and ask the user for guidance — the task may need to be scoped down. |
+| Extracted code is incomplete or malformed | Verify the `<roo_response_block>` tags are intact; if truncated, resend with a note to keep the response concise. |

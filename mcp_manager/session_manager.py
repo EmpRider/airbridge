@@ -185,9 +185,23 @@ class SessionManager:
             except SessionDead:
                 raise
             except Exception as e:
-                session.dead = True
-                session.dead_reason = f"page_check_failed:{e}"
-                raise SessionDead(str(e))
+                # For transient network errors, attempt to recover before marking dead
+                try:
+                    # Try to reload the page to recover from transient issues
+                    await page.reload(wait_until="domcontentloaded")
+                    await asyncio.sleep(1)  # Brief pause for page to stabilize
+                    # Check again after reload
+                    if page.is_closed():
+                        session.dead = True
+                        session.dead_reason = f"page_check_failed:{e}"
+                        raise SessionDead(str(e))
+                    else:
+                        logger.info(f"Session {session.id} recovered after page reload")
+                        # Continue with the request after recovery
+                except Exception as reload_error:
+                    session.dead = True
+                    session.dead_reason = f"page_check_failed:{e}"
+                    raise SessionDead(str(e))
 
             session.touch()
             try:

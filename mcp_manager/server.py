@@ -167,12 +167,30 @@ async def mcp_server():
                             logger.info(f"Creating adapter for task: {task_name}")
                             adapter = create_adapter(task_name)
                             logger.info(f"Adapter created: {adapter}")
-                            logger.info(f"Starting adapter.process() in background thread...")
-                            output = await asyncio.to_thread(adapter.process, prompt, model, chrome_path, headless)
-                            logger.info(f"Adapter.process() completed. Output length: {len(output)}")
-                            response["result"] = {
-                                "content": [{"type": "text", "text": output}]
-                            }
+                            
+                            # Import BrowserPool to execute task with proper page allocation
+                            from mcp_manager.browser_pool import BrowserPool
+                            from mcp_manager.browser import get_browser_config
+                            
+                            # Create a temporary pool for this request
+                            # In a production system, you'd want to share a pool instance
+                            temp_pool = BrowserPool(max_contexts=1, lazy_spawn=True)
+                            await temp_pool.start()
+                            
+                            try:
+                                output = await temp_pool.execute_task(
+                                    adapter,
+                                    prompt,
+                                    model,
+                                    headless=headless,
+                                    chrome_path=chrome_path
+                                )
+                                logger.info(f"Adapter.process() completed. Output length: {len(output)}")
+                                response["result"] = {
+                                    "content": [{"type": "text", "text": output}]
+                                }
+                            finally:
+                                await temp_pool.stop()
                         except ValueError as e:
                             logger.error(f"Adapter creation failed: {e}")
                             response["error"] = {"code": -32602, "message": str(e)}
