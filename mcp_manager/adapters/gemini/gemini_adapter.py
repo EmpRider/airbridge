@@ -49,25 +49,25 @@ class GeminiAdapter(BaseAdapter):
 
             if needs_login:
                 logger.info("Login required, delegating to login handler...")
-                
+
                 from mcp_manager.login_handler import LoginHandler
                 login_handler = LoginHandler()
-                
+
                 success = await login_handler.handle_login(
                     task_name=self.task_name,
                     target_context=page.context,
                     config=self.config
                 )
-                
+
                 if not success:
                     return "ERROR: Login failed or timed out. Please try again."
-                
+
                 logger.info("Login successful, reloading page...")
-                # Reload page to apply cookies
+                # Reload page to apply injected cookies
                 await page.goto(target_url, wait_until="domcontentloaded")
                 await asyncio.sleep(2)
 
-                # Re-verify page state, waiting for the input field to be ready
+                # Re-verify page state
                 input_field = await self._wait_for_input(page)
                 if not input_field:
                     raise RuntimeError("Input field not visible after login reload")
@@ -77,12 +77,12 @@ class GeminiAdapter(BaseAdapter):
                 if not input_field:
                     raise RuntimeError("Input field not visible after navigation")
 
+            # Enable temp chat if configured (must happen after page is ready)
+            await self.enable_temp_chat(page)
+
             # Select the specified model
             logger.info(f"Selecting model: {model}")
             await self._select_mode(page, model)
-
-            # Enable temp chat if configured (must happen after page is ready)
-            await self.enable_temp_chat(page)
 
             # Wait for input field
             logger.debug("Waiting for input field...")
@@ -171,7 +171,7 @@ class GeminiAdapter(BaseAdapter):
             )
             if not success:
                 raise RuntimeError("Login failed at session start")
-            # networkidle to minimize explicit sleeps
+            # Reload page to apply injected cookies
             await page.goto(target_url, wait_until="domcontentloaded")
             await asyncio.sleep(2)
 
@@ -181,12 +181,12 @@ class GeminiAdapter(BaseAdapter):
         if input_field is None:
             raise RuntimeError("Input field not visible after session setup")
 
+        # Enable temp chat if configured (must happen after page is ready)
+        await self.enable_temp_chat(page)
+
         # Lock in the model for the life of the session
         logger.info(f"Selecting model for session: {model}")
         await self._select_mode(page, model)
-
-        # Enable temp chat if configured (must happen after page is ready)
-        await self.enable_temp_chat(page)
 
         complete_selectors = self.get_all_selectors("response-complete")
         initial_count = await get_element_count(page, complete_selectors)

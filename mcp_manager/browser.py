@@ -28,7 +28,7 @@ BASE_DIR.mkdir(parents=True, exist_ok=True)
 CHROME_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Playwright defaults
-DEFAULT_VIEWPORT = {"width": 1920, "height": 1080}
+DEFAULT_VIEWPORT = {"width": 1280, "height": 720}
 USE_HEADLESS = True
 
 # Allow override via environment variable

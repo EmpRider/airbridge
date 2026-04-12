@@ -121,7 +121,6 @@ class BrowserPool:
                 f"{context_slot.context_id} (headless={context_slot.headless})"
             )
 
-            # Playwright is natively async - no need for asyncio.to_thread
             result = await adapter.process(
                 prompt,
                 model,

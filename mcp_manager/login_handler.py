@@ -6,7 +6,8 @@ Handles the login flow for any adapter by:
 2. Creating a temporary persistent context for login
 3. Waiting for user to complete login
 4. Extracting and transferring cookies to the target context
-5. Closing the login context
+5. Closing the login context (flushes all data to disk)
+6. Copying the flushed login profile to the golden directory for future reuse
 """
 import asyncio
 import logging
@@ -30,7 +31,7 @@ class LoginHandler:
 
         Args:
             task_name: Name of the task (e.g., "thinking")
-            target_context: The ephemeral context to transfer cookies to
+            target_context: The context to transfer cookies to
             config: Task configuration from config.json
 
         Returns:
@@ -50,7 +51,6 @@ class LoginHandler:
 
         login_context = None
         try:
-            # Create temporary persistent context for login
             from mcp_manager.browser import get_browser_config
             browser_config = get_browser_config()
 
@@ -60,9 +60,13 @@ class LoginHandler:
             )
 
             # Check if we already have valid cookies
-            if await self._check_saved_cookies(login_context, target_context, config, success_indicators):
+            if await self._check_saved_cookies(login_context, target_context, config, success_indicators, profile_subdir):
                 logger.info("Found valid saved session, cookies transferred")
+                # Close login context FIRST so Chromium flushes all data to disk
                 await login_context.close()
+                login_context = None
+                # Now copy the fully-flushed profile to golden for future contexts
+                self._update_golden(profile_subdir)
                 return True
 
             # Need to log in - open login window
@@ -86,18 +90,17 @@ class LoginHandler:
                 await login_page.goto(app_url, wait_until="domcontentloaded")
                 await asyncio.sleep(2)
 
-            # Transfer cookies to target context
+            # Transfer cookies to the target context so the current page works
             await self._transfer_cookies(login_context, target_context)
 
-            # Update the golden profile so future pool contexts start authenticated
-            from mcp_manager.browser import copy_profile, CHROME_PROFILE_DIR, GOLDEN_PROFILE_DIR
-            login_profile_path = CHROME_PROFILE_DIR / profile_subdir
-            copy_profile(login_profile_path, GOLDEN_PROFILE_DIR)
-            logger.info("Golden profile updated from login session")
-
-            # Close login context (session saved in persistent profile)
+            # Close login context FIRST so Chromium flushes all data to disk
+            # (cookies, localStorage, IndexedDB, service workers, etc.)
             await login_context.close()
-            logger.info("Login context closed, session saved")
+            login_context = None
+            logger.info("Login context closed, all data flushed to disk")
+
+            # Now copy the fully-flushed profile to golden for future contexts
+            self._update_golden(profile_subdir)
 
             return True
 
@@ -110,21 +113,30 @@ class LoginHandler:
                     pass
             return False
 
+    def _update_golden(self, profile_subdir: str):
+        """Copy the login profile to the golden directory.
+
+        Must be called AFTER the login context is closed so that
+        Chromium has flushed all state to disk.
+        """
+        try:
+            from mcp_manager.browser import copy_profile, CHROME_PROFILE_DIR, GOLDEN_PROFILE_DIR
+            login_profile_path = CHROME_PROFILE_DIR / profile_subdir
+            copy_profile(login_profile_path, GOLDEN_PROFILE_DIR)
+            logger.info("Golden profile updated from login session")
+        except Exception as e:
+            logger.warning(f"Failed to update golden profile: {e}")
+
     async def _check_saved_cookies(
         self,
         login_context: BrowserContext,
         target_context: BrowserContext,
         config: Dict[str, Any],
-        success_indicators: Dict[str, Any]
+        success_indicators: Dict[str, Any],
+        profile_subdir: str,
     ) -> bool:
         """
         Check if we have valid saved cookies in the persistent profile.
-
-        Args:
-            login_context: The persistent login context
-            target_context: The ephemeral context to transfer cookies to
-            config: Task configuration
-            success_indicators: Success indicators from config
 
         Returns:
             True if valid cookies found and transferred, False otherwise
@@ -138,17 +150,9 @@ class LoginHandler:
             await login_page.goto(app_url, wait_until="domcontentloaded")
             await asyncio.sleep(2)
 
-            # Check if we're logged in using success indicators
             if await self._check_success(login_page, success_indicators):
                 logger.info("Valid saved session detected")
-                # Transfer cookies
                 await self._transfer_cookies(login_context, target_context)
-                # Keep golden profile up to date with the valid session
-                from mcp_manager.browser import copy_profile, CHROME_PROFILE_DIR, GOLDEN_PROFILE_DIR
-                login_cfg = config.get("login", {})
-                login_subdir = login_cfg.get("profile_subdir") if login_cfg else None
-                if login_subdir:
-                    copy_profile(CHROME_PROFILE_DIR / login_subdir, GOLDEN_PROFILE_DIR)
                 return True
 
             return False
@@ -163,17 +167,7 @@ class LoginHandler:
         success_indicators: Dict[str, Any],
         timeout: int
     ) -> bool:
-        """
-        Wait for user to complete login.
-
-        Args:
-            login_page: The login page
-            success_indicators: Success indicators from config
-            timeout: Max seconds to wait
-
-        Returns:
-            True if login successful, False if timed out
-        """
+        """Wait for user to complete login."""
         start_time = asyncio.get_event_loop().time()
 
         while asyncio.get_event_loop().time() - start_time < timeout:
@@ -181,7 +175,6 @@ class LoginHandler:
                 if await self._check_success(login_page, success_indicators):
                     return True
             except Exception as e:
-                # Page might be navigating during login, ignore and retry
                 logger.debug(f"Error checking login status: {e}")
 
             await asyncio.sleep(1)
@@ -193,20 +186,8 @@ class LoginHandler:
         page: Page,
         success_indicators: Dict[str, Any]
     ) -> bool:
-        """
-        Check if login was successful using configured indicators.
-
-        Uses OR logic: success if ANY indicator matches.
-
-        Args:
-            page: The page to check
-            success_indicators: Dict with 'titles', 'urls', 'selectors'
-
-        Returns:
-            True if any success indicator matches
-        """
+        """Check if login was successful. Uses OR logic: any indicator match = success."""
         try:
-            # Check title
             titles = success_indicators.get("titles", [])
             if titles:
                 page_title = await page.title()
@@ -215,7 +196,6 @@ class LoginHandler:
                     logger.info(f"Login success detected: title matches '{page_title}'")
                     return True
 
-            # Check URL
             urls = success_indicators.get("urls", [])
             if urls:
                 current_url = page.url
@@ -224,7 +204,6 @@ class LoginHandler:
                         logger.info(f"Login success detected: URL contains '{url_pattern}'")
                         return True
 
-            # Check selectors
             selectors = success_indicators.get("selectors", [])
             if selectors:
                 for selector in selectors:
@@ -247,13 +226,7 @@ class LoginHandler:
         source_context: BrowserContext,
         target_context: BrowserContext
     ) -> None:
-        """
-        Transfer cookies from source context to target context.
-
-        Args:
-            source_context: Context to extract cookies from
-            target_context: Context to add cookies to
-        """
+        """Transfer cookies from source context to target context."""
         cookies = await source_context.cookies()
         logger.info(f"Extracted {len(cookies)} cookies from login session")
 
