@@ -50,23 +50,6 @@ class BaseAdapter(ABC):
         return flat
 
     @abstractmethod
-    async def process(self, prompt, model, page=None, **kwargs):
-        """
-        Execute the prompt against the target LLM via browser automation.
-
-        Args:
-            prompt: The text prompt to send
-            model: The model variant to use (e.g., 'Fast', 'Thinking', 'Pro')
-            page: Playwright Page instance (for pooling)
-            **kwargs: Additional adapter-specific arguments
-
-        Returns:
-            str: The LLM response text
-        """
-        pass
-
-    # ---- Multi-turn chat session support (optional for subclasses) ----
-
     async def start_session(self, page, model):
         """Bring a page to a state where send_in_session can be called repeatedly.
 
@@ -83,10 +66,9 @@ class BaseAdapter(ABC):
                   passes it back into send_in_session unchanged. Adapters may
                   mutate it in place from send_in_session.
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support chat sessions"
-        )
+        pass
 
+    @abstractmethod
     async def send_in_session(self, page, prompt, state, model=None):
         """Send one turn inside an already-initialized session page.
 
@@ -109,9 +91,7 @@ class BaseAdapter(ABC):
             str: Response text, or a sentinel starting with "LOGIN_EXPIRED"
                  if authentication was lost mid-session.
         """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support chat sessions"
-        )
+        pass
 
     async def enable_temp_chat(self, page):
         """Click the temp-chat toggle if the preference is enabled.

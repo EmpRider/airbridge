@@ -250,6 +250,7 @@ class HTTPServer:
 
         @self.app.post("/api/query", response_model=QueryResponse)
         async def query(request: QueryRequest):
+            session = None
             try:
                 # Sanitize all string inputs to remove lone surrogates
                 prompt = sanitize_surrogates(request.prompt)
@@ -260,12 +261,22 @@ class HTTPServer:
                     f"Query: task={task}, model={model}, "
                     f"headless={request.headless}, client={request.client_id}"
                 )
+                # Internally: create session -> send message -> end session
                 adapter = create_adapter(task)
-                result = await self.browser_pool.execute_task(
-                    adapter,
-                    prompt,
-                    model,
-                    headless=request.headless,  # honored per-request now
+                effective_headless = (
+                    self.config_snapshot["default_headless"]
+                    if request.headless is None
+                    else bool(request.headless)
+                )
+                session = await self.session_manager.create_session(
+                    adapter=adapter,
+                    task_name=task,
+                    model=model,
+                    headless=effective_headless,
+                    client_id=request.client_id,
+                )
+                result = await self.session_manager.send_message(
+                    session.id, prompt
                 )
                 return QueryResponse(result=sanitize_surrogates(result))
             except ValueError as e:
@@ -274,6 +285,12 @@ class HTTPServer:
             except Exception as e:
                 logger.error(f"Query failed: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=str(e))
+            finally:
+                if session:
+                    try:
+                        await self.session_manager.end_session(session.id)
+                    except Exception as e:
+                        logger.warning(f"Failed to close query session: {e}")
 
         # ---------------- Chat session endpoints ----------------
 

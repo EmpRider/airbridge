@@ -122,60 +122,6 @@ class MCPClient:
         self.initialized = True
         logger.info("MCP client initialized")
 
-    async def query(
-        self,
-        prompt: str,
-        task: str,
-        model: str,
-        chrome_path: Optional[str] = None,
-        headless: Optional[bool] = None
-    ) -> str:
-        """Send query to server.
-
-        Returns immediately if slot available.
-        Waits in queue if all 10 slots busy.
-
-        Args:
-            prompt: The prompt to send
-            task: The task name
-            model: The model to use
-            chrome_path: Optional Chrome path
-            headless: Optional headless setting
-
-        Returns:
-            The response from the server
-        """
-        if not self.initialized:
-            await self.initialize()
-
-        try:
-            # Enforce client's expected config defaults if not explicitly provided in query
-            if headless is None and "default_headless" in self.expected_config:
-                headless = self.expected_config["default_headless"]
-
-            response = await self.http_client.post(
-                f"{self.server_url}/api/query",
-                json={
-                    "prompt": prompt,
-                    "task": task,
-                    "model": model,
-                    "client_id": self.client_id,
-                    "chrome_path": chrome_path,
-                    "headless": headless
-                }
-            )
-            response.raise_for_status()
-
-            result = response.json()
-            return result["result"]
-
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error: {e.response.status_code} - {e.response.text}")
-            raise
-        except Exception as e:
-            logger.error(f"Query failed: {e}", exc_info=True)
-            raise
-
     async def start_session(
         self,
         task: str,
@@ -570,7 +516,6 @@ async def mcp_client_loop(client: MCPClient):
                     prompt = _sanitize_arg(arguments.get("prompt", ""))
                     task_name = _sanitize_arg(arguments.get("task", ""))
                     model = _sanitize_arg(arguments.get("mode", ""))
-                    chrome_path = arguments.get("chrome_path")
                     headless = arguments.get("headless")
 
                     if not task_name:
@@ -584,19 +529,27 @@ async def mcp_client_loop(client: MCPClient):
                             "message": "Missing required parameter: 'mode'"
                         }
                     else:
+                        session_id = None
                         try:
-                            result = await client.query(
-                                prompt, task_name, model, chrome_path, headless
-                            )
+                            # Internally: create session -> send message -> end session
+                            info = await client.start_session(task_name, model, headless)
+                            session_id = info["session_id"]
+                            result = await client.send_session_message(session_id, prompt)
                             response["result"] = {
                                 "content": [{"type": "text", "text": _sanitize_surrogates(result)}]
                             }
                         except Exception as e:
-                            logger.error(f"Query failed: {e}", exc_info=True)
+                            logger.error(f"Quick message failed: {e}", exc_info=True)
                             response["error"] = {
                                 "code": -32603,
-                                "message": f"Query failed: {str(e)}"
+                                "message": f"Quick message failed: {str(e)}"
                             }
+                        finally:
+                            if session_id:
+                                try:
+                                    await client.end_session(session_id)
+                                except Exception as e:
+                                    logger.warning(f"Failed to close quick_message session: {e}")
 
                 elif tool_name == "start_chat_session":
                     task_name = _sanitize_arg(arguments.get("task", ""))

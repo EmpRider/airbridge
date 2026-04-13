@@ -5,8 +5,7 @@ Each Session owns a BrowserSlot for its entire lifetime, serializes its
 own turns via an asyncio.Lock, and is reaped after an idle timeout.
 
 This layer sits on top of BrowserPool and calls the adapter's
-start_session() / send_in_session() methods rather than the one-shot
-process() path.
+start_session() / send_in_session() methods.
 """
 import asyncio
 import logging

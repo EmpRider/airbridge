@@ -12,6 +12,7 @@ from pathlib import Path
 from mcp_manager.browser import get_browser_config, LOG_FILE
 from mcp_manager.adapters.adapter_factory import get_available_tasks, create_adapter
 from mcp_manager.browser_pool import BrowserPool
+from mcp_manager.session_manager import SessionManager
 from mcp_manager.utils import sanitize_surrogates
 
 logger = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ async def send_response(response):
         sys.stdout.write(json.dumps(response) + "\n")
         sys.stdout.flush()
 
-async def handle_request(req, pool):
+async def handle_request(req, pool, session_manager):
     """Handle a single JSON-RPC request concurrently."""
     try:
         log_json("REQUEST", req)
@@ -180,18 +181,20 @@ async def handle_request(req, pool):
                         "message": "Missing required parameter: 'mode'. Call 'get_available_tasks' to see options."
                     }
                 else:
+                    session = None
                     try:
                         logger.info(f"Creating adapter for task: {task_name}")
                         adapter = create_adapter(task_name)
-                        
-                        output = await pool.execute_task(
-                            adapter,
-                            prompt,
-                            model,
-                            headless=headless,
-                            chrome_path=chrome_path
+                        effective_headless = headless if headless is not None else pool.default_headless
+                        # Internally: create session -> send message -> end session
+                        session = await session_manager.create_session(
+                            adapter=adapter,
+                            task_name=task_name,
+                            model=model,
+                            headless=effective_headless,
                         )
-                        logger.info(f"Adapter.process() completed. Output length: {len(output)}")
+                        output = await session_manager.send_message(session.id, prompt)
+                        logger.info(f"Query completed. Output length: {len(output)}")
                         response["result"] = {
                             "content": [{"type": "text", "text": sanitize_surrogates(output)}]
                         }
@@ -201,6 +204,12 @@ async def handle_request(req, pool):
                     except Exception as e:
                         logger.error(f"Adapter execution failed: {e}", exc_info=True)
                         response["error"] = {"code": -32603, "message": f"Adapter execution error: {str(e)}"}
+                    finally:
+                        if session:
+                            try:
+                                await session_manager.end_session(session.id)
+                            except Exception as e:
+                                logger.warning(f"Failed to close query session: {e}")
 
             else:
                 response["error"] = {"code": -32601, "message": f"Tool not found: {tool_name}"}
@@ -234,6 +243,9 @@ async def mcp_server():
     pool = BrowserPool(max_contexts=5, lazy_spawn=True)
     await pool.start()
 
+    session_manager = SessionManager(pool)
+    await session_manager.start()
+
     try:
         while True:
             line = await asyncio.to_thread(sys.stdin.readline)
@@ -246,7 +258,7 @@ async def mcp_server():
             try:
                 req = json.loads(line)
                 # Dispatch the task concurrently so the server can handle multiple rapid RPC calls
-                asyncio.create_task(handle_request(req, pool))
+                asyncio.create_task(handle_request(req, pool, session_manager))
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON input: {e}")
                 await send_response({

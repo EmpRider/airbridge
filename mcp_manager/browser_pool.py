@@ -86,57 +86,6 @@ class BrowserPool:
 
         logger.info("Browser pool stopped")
 
-    async def execute_task(
-        self,
-        adapter,
-        prompt: str,
-        model: str,
-        headless: Optional[bool] = None,
-        **kwargs,
-    ):
-        """Execute an adapter task on an available context.
-
-        Args:
-            adapter: adapter instance with an async .process() method
-            prompt: prompt text
-            model: model identifier
-            headless: per-request override; None means "use pool default"
-        """
-        self.total_requests += 1
-        request_id = self.total_requests
-
-        effective_headless = (
-            self.default_headless if headless is None else bool(headless)
-        )
-
-        logger.info(
-            f"Request {request_id}: acquiring context (headless={effective_headless})..."
-        )
-
-        context_slot = await self._get_available_slot(effective_headless)
-
-        try:
-            logger.info(
-                f"Request {request_id}: executing on context "
-                f"{context_slot.context_id} (headless={context_slot.headless})"
-            )
-
-            result = await adapter.process(
-                prompt,
-                model,
-                page=context_slot.page,
-                **kwargs,
-            )
-
-            logger.info(f"Request {request_id}: completed")
-            return result
-
-        except Exception as e:
-            logger.error(f"Request {request_id}: failed: {e}", exc_info=True)
-            raise
-        finally:
-            await self._release_slot(context_slot)
-
     async def acquire_dedicated(self, headless: bool) -> BrowserSlot:
         """Pull a fresh slot for exclusive use by a chat session.
 
