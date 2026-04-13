@@ -885,13 +885,13 @@ Edit `mcp_manager/adapters/adapter_factory.py` — add your import and registrat
 
 ```python
 def _auto_register():
-    """Auto-register built-in adapters."""
-    from mcp_manager.adapters.gemini.gemini_adapter import GeminiAdapter
-    register_adapter("gemini", GeminiAdapter)
+  """Auto-register built-in adapters."""
+  from mcp_manager.adapters.gemini.gemini_adapter import GeminiAdapter
+  register_adapter("gemini", GeminiAdapter)
 
-    # Add your new adapter here:
-    from mcp_manager.adapters.chatgpt.chatgpt_adapter import ChatGPTAdapter
-    register_adapter("chatgpt", ChatGPTAdapter)
+  # Add your new adapter here:
+  from mcp_manager.adapters.chatgpt.chatgpt_adapter import ChatGPTAdapter
+  register_adapter("chatgpt", ChatGPTAdapter)
 ```
 
 ### Step 3: Add Task Configuration

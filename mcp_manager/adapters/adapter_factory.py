@@ -48,7 +48,9 @@ def register_adapter(name, adapter_class):
 def _auto_register():
     """Auto-register built-in adapters."""
     from mcp_manager.adapters.gemini.gemini_adapter import GeminiAdapter
+    from mcp_manager.adapters.chatgpt.chatgpt_adapter import ChatgptAdapter
     register_adapter("gemini", GeminiAdapter)
+    register_adapter("chatgpt", ChatgptAdapter)
 
 
 # Auto-register on import
