@@ -23,7 +23,7 @@
     },
     "coding": {
       "adapter": "chatgpt",
-      "description": "Deep reasoning and analysis via Google Gemini. Best for complex problem-solving, brainstorming, and multi-step logical thinking."
+      "description": "Advanced coding assistance and technical problem-solving via OpenAI ChatGPT. Optimized for code generation, debugging, and software architecture."
     }
   },
   "adapters": {
@@ -31,16 +31,8 @@
       "url": "https://gemini.google.com/app",
       "modes": [
         {
-          "name": "Fast",
-          "description": "Quick responses with lower latency. Best for simple questions and fast follow-ups."
-        },
-        {
           "name": "Thinking",
           "description": "Extended reasoning with chain-of-thought. Best for math, logic, and multi-step problems."
-        },
-        {
-          "name": "Pro",
-          "description": "Most capable model for complex tasks. Best for coding, analysis, and nuanced writing."
         }
       ],
       "login": {
