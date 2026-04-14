@@ -17,8 +17,8 @@ _config_cache = None
 
 
 def _get_config_path():
-    """Resolve path to config.json relative to this package."""
-    return Path(__file__).resolve().parent.parent / "config.json"
+    """Resolve path to config.json at the project root."""
+    return Path(__file__).resolve().parent.parent.parent / "config.json"
 
 
 def load_config(config_path=None):
