@@ -1,16 +1,14 @@
 """
-Adapter factory - Dynamically loads the correct adapter based on config.json task mapping.
+Adapter factory - Dynamically configures the generic adapter based on config.json task mapping.
+Replaces the old registry-based pattern with a single GenericAdapter.
 """
 import json
 import logging
 from pathlib import Path
 
-from mcp_manager.adapters.base_adapter import BaseAdapter
+from mcp_manager.adapters.generic_adapter import GenericAdapter
 
 logger = logging.getLogger(__name__)
-
-# Registry mapping adapter name -> adapter class
-_ADAPTER_REGISTRY = {}
 
 # Loaded config cache
 _config_cache = None
@@ -35,26 +33,6 @@ def load_config(config_path=None):
         _config_cache = json.load(f)
     logger.info(f"Loaded config from {path}")
     return _config_cache
-
-
-def register_adapter(name, adapter_class):
-    """Register an adapter class by name."""
-    if not issubclass(adapter_class, BaseAdapter):
-        raise TypeError(f"{adapter_class} must be a subclass of BaseAdapter")
-    _ADAPTER_REGISTRY[name] = adapter_class
-    logger.debug(f"Registered adapter: {name} -> {adapter_class.__name__}")
-
-
-def _auto_register():
-    """Auto-register built-in adapters."""
-    from mcp_manager.adapters.gemini.gemini_adapter import GeminiAdapter
-    from mcp_manager.adapters.chatgpt.chatgpt_adapter import ChatgptAdapter
-    register_adapter("gemini", GeminiAdapter)
-    register_adapter("chatgpt", ChatgptAdapter)
-
-
-# Auto-register on import
-_auto_register()
 
 
 def _resolve_task(config, task_name):
@@ -123,26 +101,21 @@ def get_available_tasks(config_path=None):
 
 def create_adapter(task_name, config_path=None):
     """
-    Create an adapter instance for the given task name.
+    Create a GenericAdapter instance for the given task name.
 
-    Resolves the task's adapter reference, merges the adapter config
-    from the ``adapters`` section, and instantiates the adapter class.
+    Resolves the task's config reference, merges the config
+    from the ``adapters`` section, and instantiates the generic adapter.
 
     Args:
         task_name: The task key from config.json (e.g. "thinking")
         config_path: Optional override path to config.json
 
     Returns:
-        BaseAdapter: An instantiated adapter ready to process prompts
+        GenericAdapter: An instantiated generic adapter ready to process prompts
     """
     config = load_config(config_path)
     adapter_name, merged_config = _resolve_task(config, task_name)
 
-    if adapter_name not in _ADAPTER_REGISTRY:
-        registered = ", ".join(_ADAPTER_REGISTRY.keys())
-        raise ValueError(f"No adapter registered for '{adapter_name}'. Registered: {registered}")
-
-    adapter_class = _ADAPTER_REGISTRY[adapter_name]
-    adapter = adapter_class(task_name, merged_config)
-    logger.info(f"Created adapter: {adapter}")
+    adapter = GenericAdapter(task_name, merged_config)
+    logger.info(f"Created generic adapter for task: {task_name} (using config: {adapter_name})")
     return adapter

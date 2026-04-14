@@ -1,9 +1,9 @@
-"""Gemini adapter - Playwright-based browser automation for Google Gemini.
-Implements async execution with persistent session support for logins.
+"""
+Generic adapter - Playwright-based browser automation driven by config.json.
+Replaces the old Adapter pattern.
 """
 import asyncio
 import logging
-from mcp_manager.adapters.base_adapter import BaseAdapter
 from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response, fast_input
 
 logger = logging.getLogger(__name__)
@@ -16,16 +16,76 @@ TYPO_PROBABILITY = 0.0002
 POLL_INTERVAL = 0.1
 
 
-class GeminiAdapter(BaseAdapter):
-    """Adapter for Google Gemini browser automation using Playwright."""
+class GenericAdapter:
+    """Generic adapter for browser automation driven by config.json."""
+
+    def __init__(self, task_name, task_config):
+        """
+        Args:
+            task_name: The task key from config.json (e.g. "thinking")
+            task_config: The full task dict from config.json including adapter, description, selectors
+        """
+        self.task_name = task_name
+        self.config = task_config  # Store full config for access to all fields
+        self.adapter_name = task_config.get("adapter", "unknown")
+        self.description = task_config.get("description", "")
+        self.url = task_config.get("url", "")
+        self.selectors = self._flatten_selectors(task_config.get("selectors", {}))
+
+    @staticmethod
+    def _flatten_selectors(selectors_config):
+        """Flatten grouped selectors into a single lookup dict."""
+        flat = {}
+        for key, value in selectors_config.items():
+            if isinstance(value, dict):
+                # Grouped category — merge its children
+                flat.update(value)
+            else:
+                # Legacy flat entry (value is a list of selector strings)
+                flat[key] = value
+        return flat
+
+    async def enable_temp_chat(self, page):
+        """Click the temp-chat toggle if the preference is enabled."""
+        from mcp_manager.browser import get_temp_chat_preference
+        if not get_temp_chat_preference():
+            return
+        selectors = self.get_all_selectors("temp-chat")
+        if not selectors:
+            logger.debug("No temp-chat selectors configured, skipping")
+            return
+        combined = ", ".join(selectors)
+        try:
+            btn = page.locator(combined).first
+            await btn.wait_for(state="visible", timeout=5000)
+            # Guard against double-toggle: check if already active
+            is_pressed = await btn.get_attribute("aria-pressed")
+            if is_pressed == "true":
+                logger.debug("Temp chat already active, skipping click")
+                return
+            await btn.click()
+            logger.info("Temp chat enabled")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.warning(f"Could not enable temp chat: {e}")
+
+    def get_selector(self, key, fallback=None):
+        """Get the first valid selector for a given key from the config."""
+        selectors = self.selectors.get(key, [])
+        if selectors:
+            return selectors[0]
+        return fallback
+
+    def get_all_selectors(self, key):
+        """Get all selectors for a given key to try in order."""
+        return self.selectors.get(key, [])
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__} task='{self.task_name}' adapter='{self.adapter_name}'>"
 
     async def start_session(self, page, model):
-        """Open Gemini, log in if needed, pick the model, and capture baseline.
-
-        Called once per session. Subsequent turns run through send_in_session
-        which never renavigates.
-        """
-        logger.info(f"=== START GEMINI SESSION model={model} ===")
+        """Open chat UI, log in if needed, pick the model, and capture baseline."""
+        logger.info(f"=== START SESSION model={model} ===")
 
         target_url = self.url
         # networkidle to minimize explicit sleeps
@@ -47,16 +107,12 @@ class GeminiAdapter(BaseAdapter):
             await page.goto(target_url, wait_until="domcontentloaded")
             await asyncio.sleep(2)
 
-        # Confirm the chat is ready and input field is visible. This is a crucial,
-        # non-blocking alternative to explicit asyncio.sleep.
         input_field = await self._wait_for_input(page)
         if input_field is None:
             raise RuntimeError("Input field not visible after session setup")
 
-        # Enable temp chat if configured (must happen after page is ready)
         await self.enable_temp_chat(page)
 
-        # Lock in the model for the life of the session
         logger.info(f"Selecting model for session: {model}")
         await self._select_mode(page, model)
 
@@ -70,27 +126,19 @@ class GeminiAdapter(BaseAdapter):
         }
 
     async def send_in_session(self, page, prompt, state, model=None):
-        """Send one turn inside a live Gemini session \u2014 no navigation.
-
-        If `model` is provided and differs from the session's current model,
-        re-open the mode picker and switch before typing. The model choice
-        applies to this turn onward.
-        """
+        """Send one turn inside a live session \u2014 no navigation."""
         if page.is_closed():
             return "ERROR: page closed"
 
-        # Auth-expiration check: Gemini bounces to accounts.google.com if
-        # cookies died mid-session.
+        # Auth-expiration check: bounce to login url logic if configured
         current_url = page.url
-        if "accounts.google.com" in current_url:
+        login_url = self.config.get("login", {}).get("url", "")
+        if login_url and login_url in current_url:
             return "LOGIN_EXPIRED: session lost authentication"
 
-        # Per-turn model switch. We do this BEFORE waiting for the input
-        # field because the mode picker is always rendered next to it.
+        # Per-turn model switch
         if model and model != state.get("model"):
-            logger.info(
-                f"Session mode switch: {state.get('model')} -> {model}"
-            )
+            logger.info(f"Session mode switch: {state.get('model')} -> {model}")
             await self._select_mode(page, model)
             state["model"] = model
 
@@ -101,8 +149,6 @@ class GeminiAdapter(BaseAdapter):
         complete_selectors = self.get_all_selectors("response-complete")
         container_selectors = self.get_all_selectors("response-container")
 
-        # Reconcile the running baseline with reality. If the user or some
-        # other turn modified the DOM, trust the higher number.
         baseline = int(state.get("last_complete_count", 0) or 0)
         actual = await get_element_count(page, complete_selectors)
         baseline = max(baseline, actual)
@@ -128,7 +174,6 @@ class GeminiAdapter(BaseAdapter):
             poll_interval=POLL_INTERVAL,
         )
 
-        # Update running baseline so the next turn waits for count > new value
         try:
             state["last_complete_count"] = await get_element_count(
                 page, complete_selectors
@@ -155,7 +200,7 @@ class GeminiAdapter(BaseAdapter):
         return False
 
     async def _wait_for_input(self, page):
-        """Wait for the Gemini input field to be visible. Returns locator or None."""
+        """Wait for the input field to be visible."""
         selectors = self.get_all_selectors("message-box")
         if not selectors:
             return None
@@ -168,16 +213,13 @@ class GeminiAdapter(BaseAdapter):
             return None
 
     async def _select_mode(self, page, model_name):
-        """Select the specified chat model via the mode picker.
+        """Select the specified chat model via the mode picker."""
+        if not model_name:
+            return
 
-        Args:
-            page: Playwright Page instance
-            model_name: Name of the model to select ('Fast', 'Thinking', or 'Pro')
-        """
         try:
             logger.info(f"Attempting to select '{model_name}' mode...")
 
-            # Get selectors from config
             picker_selectors = self.get_all_selectors("mode-picker")
             item_selectors = self.get_all_selectors("mode-item")
 
@@ -189,22 +231,19 @@ class GeminiAdapter(BaseAdapter):
                 logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
                 return
 
-            # Wait for and click the mode picker button
             combined_picker = ", ".join(picker_selectors)
             try:
                 picker_btn = page.locator(combined_picker).first
-                # Increased timeout to handle page load speed, and explicit visibility check
                 await picker_btn.wait_for(state="visible", timeout=15000)
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
-                # Wait for menu animation \u2014 use wait_for_selector on a menu item
+
                 combined_items = ", ".join(item_selectors)
                 await page.locator(combined_items).first.wait_for(state="visible", timeout=10000)
             except Exception as e:
                 logger.warning(f"Could not click mode picker or wait for menu: {e}. Mode may already be selected.")
                 return
 
-            # Find and click the specified model item
             try:
                 items = page.locator(combined_items)
                 count = await items.count()
@@ -218,8 +257,6 @@ class GeminiAdapter(BaseAdapter):
                     if model_name in item_text:
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await item.click()
-                        # Wait for selection menu to close and choice to apply
-                        # A brief wait for the animation to complete and UI to update
                         await asyncio.sleep(1)
                         return
 

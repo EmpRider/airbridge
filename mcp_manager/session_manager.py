@@ -25,7 +25,7 @@ class Session:
     headless: bool
     client_id: Optional[str]
     slot: any                       # BrowserSlot
-    adapter: any                    # BaseAdapter
+    adapter: any                    # GenericAdapter
     state: dict = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     created_at: float = field(default_factory=time.time)
