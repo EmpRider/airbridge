@@ -1,0 +1,3 @@
+## 2026-04-17 - Asyncio Event Loop Blocking in Playwright Profile Management
+**Learning:** The `BrowserPool` uses `shutil.copytree` (via `copy_profile`) and `shutil.rmtree` to manage Playwright Chrome profile directories when spawning and destroying browser contexts. These operations are synchronous disk I/O and were blocking the main `asyncio` event loop. Because profile directories can be large, this stalls all concurrent request handling in the MCP server.
+**Action:** Always offload synchronous disk operations (like copying or deleting directories) to thread pools using `asyncio.to_thread` when working within high-concurrency `asyncio` components like connection or browser pools.
