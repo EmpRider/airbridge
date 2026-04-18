@@ -246,17 +246,21 @@ class GenericAdapter:
 
             try:
                 items = page.locator(combined_items)
-                count = await items.count()
+
+                # Bolt Performance Optimization ⚡
+                # Replaced N+1 inner_text() calls with a single all_inner_texts() fetch.
+                # This reduces asynchronous browser round-trips from O(N) to O(1),
+                # measurably speeding up the mode selection process.
+                all_texts = await items.all_inner_texts()
+                count = len(all_texts)
                 logger.debug(f"Found {count} mode items")
 
-                for i in range(count):
-                    item = items.nth(i)
-                    item_text = await item.inner_text()
-                    item_text = item_text.strip()
+                for i, text in enumerate(all_texts):
+                    item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
                     if model_name in item_text:
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
-                        await item.click()
+                        await items.nth(i).click()
                         await asyncio.sleep(1)
                         return
 
