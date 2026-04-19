@@ -1,0 +1,3 @@
+## 2024-05-24 - [Avoid Synchronous File I/O in Asyncio Main Thread]
+**Learning:** Calling synchronous file I/O operations (like `shutil.rmtree` and `shutil.copytree`) directly on the main asyncio thread blocks the event loop. In high-concurrency architectures using libraries like Playwright, this can stall the entire server, preventing other async operations (like network requests or connection pooling) from running.
+**Action:** Always wrap blocking, synchronous file I/O operations in `asyncio.to_thread()` when executing them within an asyncio-driven environment to allow the event loop to continue processing other concurrent tasks efficiently.
