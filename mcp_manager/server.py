@@ -48,12 +48,11 @@ def _build_tools_list():
     tasks = get_available_tasks()
     task_names = list(tasks.keys())
 
-    # Collect all unique mode names across tasks
-    all_mode_names = []
-    for t in tasks.values():
-        for m in t.get("modes", []):
-            if m["name"] not in all_mode_names:
-                all_mode_names.append(m["name"])
+    # ⚡ Bolt: Replaced O(N^2) list membership check with O(N) dict.fromkeys deduplication
+    # Collect all unique mode names across tasks while preserving order
+    all_mode_names = list(dict.fromkeys(
+        m["name"] for t in tasks.values() for m in t.get("modes", [])
+    ))
 
     task_descriptions = ", ".join(
         f"'{k}': {v['description']}" for k, v in tasks.items()
