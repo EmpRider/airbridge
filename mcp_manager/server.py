@@ -52,8 +52,9 @@ def _build_tools_list():
     all_mode_names = []
     for t in tasks.values():
         for m in t.get("modes", []):
-            if m["name"] not in all_mode_names:
-                all_mode_names.append(m["name"])
+            all_mode_names.append(m["name"])
+    # Deduplicate while preserving order (O(N) instead of O(N^2))
+    all_mode_names = list(dict.fromkeys(all_mode_names))
 
     task_descriptions = ", ".join(
         f"'{k}': {v['description']}" for k, v in tasks.items()
@@ -245,6 +246,10 @@ async def mcp_server():
 
     session_manager = SessionManager(pool)
     await session_manager.start()
+
+    # Pre-load adapter config asynchronously on server startup
+    from mcp_manager.adapters.adapter_factory import load_config
+    await asyncio.to_thread(load_config)
 
     try:
         while True:

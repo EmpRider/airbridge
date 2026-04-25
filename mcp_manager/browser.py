@@ -167,14 +167,19 @@ def golden_profile_exists() -> bool:
     return any(GOLDEN_PROFILE_DIR.iterdir())
 
 
-def copy_profile(src: Path, dst: Path):
-    """Copy a browser profile directory, skipping Chromium lock files."""
+async def copy_profile(src: Path, dst: Path):
+    """Copy a browser profile directory, skipping Chromium lock files.
+    Optimized to use asyncio.to_thread to prevent stalling the main event loop
+    during file I/O operations."""
     try:
         if not src.is_dir():
             logger.warning(f"Source profile does not exist: {src}")
             return False
         dst.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(str(src), str(dst), dirs_exist_ok=True, ignore=_ignore_lock_files)
+        # Offload blocking file I/O to thread pool
+        await asyncio.to_thread(
+            shutil.copytree, str(src), str(dst), dirs_exist_ok=True, ignore=_ignore_lock_files
+        )
         logger.info(f"Profile copied: {src} -> {dst}")
         return True
     except Exception as e:
@@ -183,7 +188,8 @@ def copy_profile(src: Path, dst: Path):
 
 
 def cleanup_pool_profiles():
-    """Delete stale pool_* profile directories left from previous runs."""
+    """Delete stale pool_* profile directories left from previous runs.
+    Note: this is often run inside an asyncio.to_thread context to avoid blocking."""
     try:
         for entry in CHROME_PROFILE_DIR.iterdir():
             if entry.is_dir() and entry.name.startswith("pool_"):
