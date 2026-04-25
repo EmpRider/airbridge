@@ -164,6 +164,11 @@ class HTTPServer:
                 print(f"FATAL: Could not write PID file: {e}", file=sys.stderr, flush=True)
                 raise
 
+            # Pre-load adapter config asynchronously on server startup
+            # This prevents the synchronous json.load from blocking the event loop on the first incoming request.
+            from mcp_manager.adapters.adapter_factory import load_config
+            await asyncio.to_thread(load_config)
+
             await self.browser_pool.start()
             await self.session_manager.start()
             logger.info("Server startup complete")

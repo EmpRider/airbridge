@@ -60,7 +60,8 @@ class BrowserPool:
     async def start(self):
         # Clean up stale pool profile directories from previous runs/crashes
         from mcp_manager.browser import cleanup_pool_profiles
-        cleanup_pool_profiles()
+        # Offload blocking file I/O to thread pool
+        await asyncio.to_thread(cleanup_pool_profiles)
 
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info("Browser pool started")
@@ -243,15 +244,19 @@ class BrowserPool:
             logger.error(f"Failed to cleanly close context {slot.context_id}: {e}")
 
         # Clean up the pool profile directory on disk
-        self._cleanup_pool_profile(slot.context_id)
+        # Fire-and-forget task so we don't block release
+        asyncio.create_task(self._cleanup_pool_profile(slot.context_id))
 
-    def _cleanup_pool_profile(self, context_id: str):
-        """Remove the pool_<id> profile directory from disk."""
+    async def _cleanup_pool_profile(self, context_id: str):
+        """Remove the pool_<id> profile directory from disk.
+        Optimized to use asyncio.to_thread to prevent stalling the main event loop
+        during file I/O operations."""
         try:
             from mcp_manager.browser import CHROME_PROFILE_DIR
             pool_dir = CHROME_PROFILE_DIR / f"pool_{context_id}"
             if pool_dir.is_dir():
-                shutil.rmtree(str(pool_dir), ignore_errors=True)
+                # Offload blocking file I/O to thread pool
+                await asyncio.to_thread(shutil.rmtree, str(pool_dir), ignore_errors=True)
                 logger.debug(f"Cleaned up pool profile: pool_{context_id}")
         except Exception as e:
             logger.warning(f"Failed to clean up pool profile pool_{context_id}: {e}")
@@ -277,7 +282,7 @@ class BrowserPool:
             if golden_profile_exists():
                 pool_subdir = f"pool_{context_id}"
                 pool_profile_path = CHROME_PROFILE_DIR / pool_subdir
-                copy_profile(GOLDEN_PROFILE_DIR, pool_profile_path)
+                await copy_profile(GOLDEN_PROFILE_DIR, pool_profile_path)
                 context = await config.create_context(
                     profile_subdir=pool_subdir,
                     headless_override=headless,
