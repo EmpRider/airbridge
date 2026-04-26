@@ -49,11 +49,13 @@ def _build_tools_list():
     task_names = list(tasks.keys())
 
     # Collect all unique mode names across tasks
-    all_mode_names = []
-    for t in tasks.values():
-        for m in t.get("modes", []):
-            if m["name"] not in all_mode_names:
-                all_mode_names.append(m["name"])
+    # ⚡ Bolt Optimization: Replaced O(N^2) list 'not in' lookup inside loops
+    # with O(N) dict.fromkeys order-preserving deduplication
+    all_mode_names = list(dict.fromkeys(
+        m["name"]
+        for t in tasks.values()
+        for m in t.get("modes", [])
+    ))
 
     task_descriptions = ", ".join(
         f"'{k}': {v['description']}" for k, v in tasks.items()
