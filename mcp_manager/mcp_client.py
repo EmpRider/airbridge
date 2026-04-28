@@ -316,11 +316,13 @@ async def mcp_client_loop(client: MCPClient):
                 task_names = list(tasks.keys())
 
                 # Collect all unique mode names across tasks
-                all_mode_names = []
-                for t in tasks.values():
-                    for m in t.get("modes", []):
-                        if m["name"] not in all_mode_names:
-                            all_mode_names.append(m["name"])
+                # OPTIMIZATION: Using dict.fromkeys() for O(N) order-preserving deduplication
+                # instead of O(N^2) list membership checks.
+                all_mode_names = list(dict.fromkeys(
+                    m["name"]
+                    for t in tasks.values()
+                    for m in t.get("modes", [])
+                ))
 
                 # Build a concise summary for tool descriptions
                 task_descriptions = ", ".join(
