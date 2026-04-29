@@ -18,7 +18,7 @@ from pydantic import BaseModel
 import uvicorn
 
 from mcp_manager.browser_pool import BrowserPool
-from mcp_manager.adapters.adapter_factory import get_available_tasks, create_adapter
+from mcp_manager.adapters.adapter_factory import get_available_tasks, create_adapter, load_config
 from mcp_manager.utils import sanitize_surrogates
 from mcp_manager.session_manager import (
     SessionManager,
@@ -163,6 +163,13 @@ class HTTPServer:
                 # Write error to stderr so start_server_safe sees it
                 print(f"FATAL: Could not write PID file: {e}", file=sys.stderr, flush=True)
                 raise
+
+            # Pre-load config asynchronously to prevent blocking the event loop on first request
+            try:
+                await asyncio.to_thread(load_config)
+                logger.info("Configuration pre-loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to pre-load configuration: {e}")
 
             await self.browser_pool.start()
             await self.session_manager.start()

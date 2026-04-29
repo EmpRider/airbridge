@@ -1,0 +1,3 @@
+## 2024-04-29 - [Performance Pattern: Async I/O for File and JSON Loading]
+**Learning:** During application startup or at the boundary of incoming requests, synchronous operations like file reading and JSON parsing (`json.load`) will block the main `asyncio` event loop. This leads to latency spikes and stalls concurrent request processing, which is especially problematic for the first incoming request or connection handling.
+**Action:** Always offload synchronous blocking I/O or heavy parsing operations to a background thread using `asyncio.to_thread()` when performing them in an `async` context, such as pre-loading configurations or caching application states during startup.
