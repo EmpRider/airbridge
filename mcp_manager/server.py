@@ -49,11 +49,13 @@ def _build_tools_list():
     task_names = list(tasks.keys())
 
     # Collect all unique mode names across tasks
-    all_mode_names = []
+    # ⚡ Bolt Optimization: Use dictionary-based deduplication (O(N)) instead of list membership checks (O(N^2))
+    # Python 3.7+ dictionaries maintain insertion order, satisfying the order-preserving deduplication requirement.
+    mode_names_dict = {}
     for t in tasks.values():
         for m in t.get("modes", []):
-            if m["name"] not in all_mode_names:
-                all_mode_names.append(m["name"])
+            mode_names_dict[m["name"]] = None
+    all_mode_names = list(mode_names_dict.keys())
 
     task_descriptions = ", ".join(
         f"'{k}': {v['description']}" for k, v in tasks.items()
