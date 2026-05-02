@@ -164,6 +164,15 @@ class HTTPServer:
                 print(f"FATAL: Could not write PID file: {e}", file=sys.stderr, flush=True)
                 raise
 
+            # ⚡ Bolt: Pre-load the adapter config asynchronously during startup.
+            # This prevents a blocking synchronous file I/O (json.load) on the first incoming query request.
+            from mcp_manager.adapters.adapter_factory import load_config
+            try:
+                await asyncio.to_thread(load_config)
+                logger.info("Adapter configuration pre-loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to pre-load adapter configuration: {e}")
+
             await self.browser_pool.start()
             await self.session_manager.start()
             logger.info("Server startup complete")
