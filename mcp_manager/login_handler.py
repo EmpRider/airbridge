@@ -66,7 +66,8 @@ class LoginHandler:
                 await login_context.close()
                 login_context = None
                 # Now copy the fully-flushed profile to golden for future contexts
-                self._update_golden(profile_subdir)
+                # ⚡ Bolt: Offload blocking file copy to thread
+                await asyncio.to_thread(self._update_golden, profile_subdir)
                 return True
 
             # Need to log in - open login window
@@ -100,7 +101,8 @@ class LoginHandler:
             logger.info("Login context closed, all data flushed to disk")
 
             # Now copy the fully-flushed profile to golden for future contexts
-            self._update_golden(profile_subdir)
+            # ⚡ Bolt: Offload blocking file copy to thread
+            await asyncio.to_thread(self._update_golden, profile_subdir)
 
             return True
 

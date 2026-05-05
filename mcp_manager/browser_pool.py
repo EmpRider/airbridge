@@ -59,8 +59,9 @@ class BrowserPool:
 
     async def start(self):
         # Clean up stale pool profile directories from previous runs/crashes
+        # ⚡ Bolt: Offload blocking directory removal to thread
         from mcp_manager.browser import cleanup_pool_profiles
-        cleanup_pool_profiles()
+        await asyncio.to_thread(cleanup_pool_profiles)
 
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         logger.info("Browser pool started")
@@ -243,7 +244,8 @@ class BrowserPool:
             logger.error(f"Failed to cleanly close context {slot.context_id}: {e}")
 
         # Clean up the pool profile directory on disk
-        self._cleanup_pool_profile(slot.context_id)
+        # ⚡ Bolt: Offload blocking directory removal to thread
+        await asyncio.to_thread(self._cleanup_pool_profile, slot.context_id)
 
     def _cleanup_pool_profile(self, context_id: str):
         """Remove the pool_<id> profile directory from disk."""
@@ -277,7 +279,8 @@ class BrowserPool:
             if golden_profile_exists():
                 pool_subdir = f"pool_{context_id}"
                 pool_profile_path = CHROME_PROFILE_DIR / pool_subdir
-                copy_profile(GOLDEN_PROFILE_DIR, pool_profile_path)
+                # ⚡ Bolt: Offload blocking file copying to thread
+                await asyncio.to_thread(copy_profile, GOLDEN_PROFILE_DIR, pool_profile_path)
                 context = await config.create_context(
                     profile_subdir=pool_subdir,
                     headless_override=headless,
