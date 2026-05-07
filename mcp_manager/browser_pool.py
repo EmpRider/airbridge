@@ -153,7 +153,8 @@ class BrowserPool:
                 logger.error(
                     f"Failed closing dedicated context {slot.context_id}: {e}"
                 )
-            self._cleanup_pool_profile(slot.context_id)
+            # ⚡ Bolt: Offload blocking directory removal to thread to prevent event loop stalls
+            await asyncio.to_thread(self._cleanup_pool_profile, slot.context_id)
 
     async def _get_available_slot(self, headless: bool) -> BrowserSlot:
         """Find or create a context slot matching the requested headless mode.
