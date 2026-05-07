@@ -5,3 +5,7 @@
 ## 2024-05-05 - [Asynchronous Browser Profile I/O]
 **Learning:** File system operations like `shutil.copytree` and `shutil.rmtree` used for copying and deleting Playwright profiles are synchronous and can take significant time. When executed directly on the main event loop in an asyncio-driven application, they create hidden micro-stalls, blocking the server from processing concurrent requests and degrading performance during high concurrency.
 **Action:** Always offload blocking file I/O operations, such as profile copying and cleanup, to worker threads using `await asyncio.to_thread()`. This prevents stalling the main event loop and maintains responsiveness.
+
+## 2024-05-07 - [Event Loop Stalls from Profile Cleanup]
+**Learning:** Missed synchronous file I/O operations (like `shutil.rmtree` inside `_cleanup_pool_profile`) located deep inside asynchronous session management methods (e.g., `release_dedicated`) can cause critical event loop stalls during high concurrency when sessions are frequently created and destroyed.
+**Action:** Always audit lifecycle tear-down functions in asyncio applications for synchronous disk operations, and wrap them in `await asyncio.to_thread` to maintain loop responsiveness.

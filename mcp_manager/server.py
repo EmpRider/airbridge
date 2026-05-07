@@ -238,6 +238,9 @@ async def handle_request(req, pool, session_manager):
 async def mcp_server():
     """MCP JSON-RPC server loop reading from stdin, processing concurrently."""
     logger.info("MCP server started (adapter architecture)")
+    # ⚡ Bolt: Pre-load the adapter config asynchronously during startup.
+    from mcp_manager.adapters.adapter_factory import load_config
+    await asyncio.to_thread(load_config)
 
     # Share a single pool instance across all requests to massively improve performance
     pool = BrowserPool(max_contexts=5, lazy_spawn=True)
