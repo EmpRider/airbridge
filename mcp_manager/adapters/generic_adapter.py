@@ -246,16 +246,18 @@ class GenericAdapter:
 
             try:
                 items = page.locator(combined_items)
-                count = await items.count()
+                # ⚡ Bolt: Fetch all texts in a single Playwright network round-trip
+                # This prevents the N+1 query problem where we make O(N) network calls to inner_text()
+                texts = await items.all_inner_texts()
+                count = len(texts)
                 logger.debug(f"Found {count} mode items")
 
-                for i in range(count):
-                    item = items.nth(i)
-                    item_text = await item.inner_text()
+                for i, item_text in enumerate(texts):
                     item_text = item_text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
                     if model_name in item_text:
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
+                        item = items.nth(i)
                         await item.click()
                         await asyncio.sleep(1)
                         return
