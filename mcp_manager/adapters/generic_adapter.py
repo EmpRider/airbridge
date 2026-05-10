@@ -249,14 +249,16 @@ class GenericAdapter:
                 count = await items.count()
                 logger.debug(f"Found {count} mode items")
 
-                for i in range(count):
-                    item = items.nth(i)
-                    item_text = await item.inner_text()
-                    item_text = item_text.strip()
+                # ⚡ Bolt: Use all_inner_texts() to fetch all texts in a single network round-trip
+                # This prevents the N+1 query pattern of awaiting inner_text() in a loop
+                item_texts = await items.all_inner_texts()
+
+                for i, text in enumerate(item_texts):
+                    item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
                     if model_name in item_text:
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
-                        await item.click()
+                        await items.nth(i).click()
                         await asyncio.sleep(1)
                         return
 
