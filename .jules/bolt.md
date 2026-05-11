@@ -5,3 +5,7 @@
 ## 2024-05-05 - [Asynchronous Browser Profile I/O]
 **Learning:** File system operations like `shutil.copytree` and `shutil.rmtree` used for copying and deleting Playwright profiles are synchronous and can take significant time. When executed directly on the main event loop in an asyncio-driven application, they create hidden micro-stalls, blocking the server from processing concurrent requests and degrading performance during high concurrency.
 **Action:** Always offload blocking file I/O operations, such as profile copying and cleanup, to worker threads using `await asyncio.to_thread()`. This prevents stalling the main event loop and maintains responsiveness.
+
+## 2024-05-15 - [Playwright N+1 Query Bottleneck]
+**Learning:** Calling `await item.inner_text()` sequentially in a loop over Playwright elements creates an O(N) N+1 query bottleneck because each call requires an independent network round-trip between the Python process and the browser. This severely degrades performance when inspecting lists or menus with many items.
+**Action:** When extracting text from multiple elements found by a Playwright locator, avoid looping with `inner_text()`. Instead, always use `await items.all_inner_texts()` to fetch all text in a single efficient network round-trip.
