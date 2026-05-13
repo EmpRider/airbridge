@@ -246,17 +246,19 @@ class GenericAdapter:
 
             try:
                 items = page.locator(combined_items)
-                count = await items.count()
-                logger.debug(f"Found {count} mode items")
 
-                for i in range(count):
-                    item = items.nth(i)
-                    item_text = await item.inner_text()
-                    item_text = item_text.strip()
+                # OPTIMIZATION: Use all_inner_texts() to fetch all texts in a single network
+                # round-trip instead of N+1 await item.inner_text() calls inside a loop.
+                # This significantly reduces latency when there are many mode items.
+                all_texts = await items.all_inner_texts()
+                logger.debug(f"Found {len(all_texts)} mode items")
+
+                for i, text in enumerate(all_texts):
+                    item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
                     if model_name in item_text:
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
-                        await item.click()
+                        await items.nth(i).click()
                         await asyncio.sleep(1)
                         return
 
