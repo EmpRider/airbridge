@@ -235,6 +235,17 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Check if the model is already selected by examining the picker button's text
+                # to avoid a network round-trip and DOM interaction overhead of opening the dropdown menu.
+                try:
+                    current_text = await picker_btn.inner_text()
+                    if current_text and model_name == current_text.strip():
+                        logger.info(f"Mode '{model_name}' is already selected (found in picker text). Skipping menu open.")
+                        return
+                except Exception as e:
+                    logger.debug(f"Could not check current mode text: {e}")
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
