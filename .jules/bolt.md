@@ -9,3 +9,7 @@
 ## 2024-05-12 - [Playwright N+1 Locator Text Extraction]
 **Learning:** Using `await items.nth(i).inner_text()` inside a loop after `await items.count()` creates an N+1 query pattern where each text extraction results in a separate network round-trip between the Node.js test runner and the browser. This can cause significant latency if the list is long.
 **Action:** Always use `await items.all_inner_texts()` to fetch all texts in a single batch round-trip, then iterate locally over the result to perform the required logic or to find the index needed for a subsequent click via `await items.nth(i).click()`.
+
+## 2024-05-15 - [Playwright UI Automation Early Return]
+**Learning:** In Playwright UI automation, unconditionally executing UI interactions like clicking to open menus and waiting for visibility can add significant overhead. Often, the desired state (like an already selected model in a dropdown) is already active.
+**Action:** Always verify if the desired state is active before proceeding with expensive interactions. For example, inspect a dropdown trigger's `inner_text` and implement an early return if the desired option is already selected. This avoids unnecessary clicks and DOM changes, improving performance and reliability.
