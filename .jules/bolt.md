@@ -9,3 +9,7 @@
 ## 2024-05-12 - [Playwright N+1 Locator Text Extraction]
 **Learning:** Using `await items.nth(i).inner_text()` inside a loop after `await items.count()` creates an N+1 query pattern where each text extraction results in a separate network round-trip between the Node.js test runner and the browser. This can cause significant latency if the list is long.
 **Action:** Always use `await items.all_inner_texts()` to fetch all texts in a single batch round-trip, then iterate locally over the result to perform the required logic or to find the index needed for a subsequent click via `await items.nth(i).click()`.
+
+## 2024-05-17 - [Playwright UI State Verification Matching]
+**Learning:** When adding fast paths to skip UI interactions based on the current state (like checking if a dropdown already shows the correct text), using substring matching (e.g., `model_name.lower() in current_mode.lower()`) can cause false positive regressions. For example, "GPT-4" would match "GPT-4-Turbo", skipping the selection when the wrong model is active.
+**Action:** Always use exact string matching with trimming (`model_name.strip() == current_mode.strip()`) when verifying active UI text against desired state to ensure correct fallback behavior if the state doesn't perfectly match.

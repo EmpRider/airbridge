@@ -234,7 +234,15 @@ class GenericAdapter:
             combined_picker = ", ".join(picker_selectors)
             try:
                 picker_btn = page.locator(combined_picker).first
+
+                # Wait for visibility first to respect the defined timeout
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # Fast path: check if desired mode is already selected on the button text
+                current_mode = await picker_btn.inner_text()
+                if model_name.strip() == current_mode.strip():
+                    logger.info(f"Mode '{model_name}' already active, skipping UI interaction.")
+                    return
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
