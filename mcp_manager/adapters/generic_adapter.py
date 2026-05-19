@@ -235,6 +235,15 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Check if the desired mode is already active before
+                # unconditionally opening the menu. This saves ~1-2 seconds per turn
+                # in Playwright latency when the model doesn't need changing.
+                current_text = await picker_btn.inner_text()
+                if current_text and model_name.strip() == current_text.strip():
+                    logger.debug(f"Mode '{model_name}' is already active. Skipping selection.")
+                    return
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
