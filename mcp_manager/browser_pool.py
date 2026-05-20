@@ -339,12 +339,16 @@ class BrowserPool:
         to_remove = []
 
         async with self.lock:
+            # ⚡ Bolt: Use O(N) single-pass filter with slice assignment instead of O(N^2) list.remove() inside a loop
+            # Expected impact: Prevents CPU spikes and lock contention during large pool cleanups
+            retained = []
             for slot in self.contexts:
                 if not slot.dedicated and (current_time - slot.created_at) > self.context_idle_timeout:
                     to_remove.append(slot)
+                else:
+                    retained.append(slot)
                     
-            for slot in to_remove:
-                self.contexts.remove(slot)
+            self.contexts[:] = retained
 
         # Do the heavy closing outside the lock with timeouts
         for slot in to_remove:
