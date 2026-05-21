@@ -235,6 +235,15 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Check if desired mode is already active before unconditional clicking
+                # This avoids expensive DOM operations (clicking, waiting for menu, scanning items)
+                # Expected Impact: Saves ~1-2s per turn if mode doesn't change
+                current_text = await picker_btn.inner_text()
+                if current_text and current_text.strip() == model_name.strip():
+                    logger.info(f"Mode '{model_name}' is already active, skipping menu interaction")
+                    return
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
