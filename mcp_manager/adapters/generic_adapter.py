@@ -235,6 +235,13 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Check if desired model is already selected before clicking
+                current_text = await picker_btn.inner_text()
+                if current_text and model_name.strip() == current_text.strip():
+                    logger.info(f"Model '{model_name}' is already selected, skipping picker interaction.")
+                    return
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
