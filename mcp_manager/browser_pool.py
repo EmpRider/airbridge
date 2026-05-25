@@ -339,12 +339,17 @@ class BrowserPool:
         to_remove = []
 
         async with self.lock:
+            # ⚡ Bolt: Use a single-pass filter to build a list of retained contexts
+            # This avoids the O(N^2) complexity of calling .remove() inside a loop
+            retained = []
             for slot in self.contexts:
                 if not slot.dedicated and (current_time - slot.created_at) > self.context_idle_timeout:
                     to_remove.append(slot)
+                else:
+                    retained.append(slot)
                     
-            for slot in to_remove:
-                self.contexts.remove(slot)
+            # Update the contexts list in-place without breaking references
+            self.contexts[:] = retained
 
         # Do the heavy closing outside the lock with timeouts
         for slot in to_remove:
