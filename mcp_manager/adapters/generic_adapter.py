@@ -235,6 +235,13 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Check if the model is already selected to avoid unnecessary click and waits
+                current_text = await picker_btn.inner_text()
+                if model_name.strip() == current_text.strip():
+                    logger.info(f"Mode '{model_name}' is already selected. Skipping picker click.")
+                    return
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
@@ -256,7 +263,7 @@ class GenericAdapter:
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if model_name in item_text:
+                    if model_name.strip() == item_text:
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
