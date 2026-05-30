@@ -4,6 +4,7 @@ Replaces the old Adapter pattern.
 """
 import asyncio
 import logging
+import re
 from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response, fast_input
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,17 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Early return if desired model is already selected
+                # Avoid unconditional and expensive click/wait operations.
+                # Use robust regex matching to prevent regression risks with overlapping model names.
+                current_text = await picker_btn.inner_text()
+                if current_text:
+                    pattern = r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])'
+                    if re.search(pattern, current_text):
+                        logger.info(f"Mode '{model_name}' is already active, skipping click.")
+                        return
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
