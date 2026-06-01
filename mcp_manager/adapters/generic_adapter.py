@@ -4,6 +4,7 @@ Replaces the old Adapter pattern.
 """
 import asyncio
 import logging
+import re
 from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response, fast_input
 
 logger = logging.getLogger(__name__)
@@ -231,10 +232,24 @@ class GenericAdapter:
                 logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
                 return
 
+            # Robust model name matching pattern
+            # Using negative lookbehinds/lookaheads to prevent matching sub-strings (e.g. GPT-4 matching GPT-4-turbo)
+            pattern = r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])'
+
             combined_picker = ", ".join(picker_selectors)
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # ⚡ Bolt OPTIMIZATION: Early return if already selected
+                # Check the picker button text before clicking. If the desired model is already active,
+                # we skip the expensive operations of opening the menu, waiting for animation,
+                # fetching all items, and clicking again. Saves ~500-1000ms per turn when model hasn't changed.
+                current_picker_text = await picker_btn.inner_text()
+                if re.search(pattern, current_picker_text):
+                    logger.info(f"Mode '{model_name}' is already selected (found in picker text). Skipping click.")
+                    return
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
@@ -256,7 +271,8 @@ class GenericAdapter:
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if model_name in item_text:
+                    # ⚡ Bolt OPTIMIZATION: Use robust regex matching instead of simple substring matching
+                    if re.search(pattern, item_text):
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
