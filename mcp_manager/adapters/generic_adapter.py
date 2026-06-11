@@ -232,9 +232,22 @@ class GenericAdapter:
                 return
 
             combined_picker = ", ".join(picker_selectors)
+            import re
+
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Check if the desired mode is already selected before clicking.
+                # This saves multiple network round-trips and wait timeouts if already active.
+                try:
+                    current_text = await picker_btn.inner_text(timeout=2000)
+                    if current_text and re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', current_text):
+                        logger.info(f"Mode '{model_name}' is already active, skipping menu interaction.")
+                        return
+                except Exception as e:
+                    logger.debug(f"Could not read current picker text: {e}")
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
@@ -256,7 +269,8 @@ class GenericAdapter:
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if model_name in item_text:
+                    # OPTIMIZATION: Use regex to prevent false positives with overlapping model names
+                    if re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', item_text):
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
