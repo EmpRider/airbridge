@@ -9,3 +9,7 @@
 ## 2024-05-12 - [Playwright N+1 Locator Text Extraction]
 **Learning:** Using `await items.nth(i).inner_text()` inside a loop after `await items.count()` creates an N+1 query pattern where each text extraction results in a separate network round-trip between the Node.js test runner and the browser. This can cause significant latency if the list is long.
 **Action:** Always use `await items.all_inner_texts()` to fetch all texts in a single batch round-trip, then iterate locally over the result to perform the required logic or to find the index needed for a subsequent click via `await items.nth(i).click()`.
+
+## 2024-06-15 - [O(N^2) list.remove() inside loops]
+**Learning:** Using `list.remove(item)` inside a loop to remove elements from a list causes O(N^2) time complexity because `remove()` performs a linear search each time. In a heavily asyncio-driven application, this can cause micro-stalls on the main event loop if the list grows large. Additionally, using `remove()` on objects of an unhashable type (like dataclasses) can lead to unexpected issues if we try to use set-based logic without a unique identifier.
+**Action:** When filtering out objects from a list, avoid using `.remove()` in a loop. Instead, store the unique identifiers (e.g., `context_id`) of the items to remove in a set for O(1) lookups, and use a single-pass filter to build a retained list, reassigning it in-place using slice assignment (e.g., `my_list[:] = [item for item in my_list if item.id not in remove_ids]`) to maintain O(N) complexity and preserve external references.

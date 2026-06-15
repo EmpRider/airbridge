@@ -165,8 +165,10 @@ class BrowserPool:
             should_spawn = False
             
             async with self.lock:
-                # Iterate over a shallow copy to safely mutate self.contexts internally if closed
-                for slot in list(self.contexts):
+                to_remove_ids = set()
+
+                # Iterate over self.contexts directly since we are not mutating it inside the loop anymore
+                for slot in self.contexts:
                     if slot.dedicated:
                         continue
                     if slot.headless == headless:
@@ -174,15 +176,23 @@ class BrowserPool:
                         try:
                             # Try to access the context to verify it's still valid
                             _ = slot.context.pages
+
+                            # If we have collected any closed contexts, remove them before returning
+                            if to_remove_ids:
+                                self.contexts[:] = [s for s in self.contexts if s.context_id not in to_remove_ids]
+
                             slot.request_count += 1
                             return slot
                         except Exception as e:
-                            # Context is closed, remove it from pool safely
+                            # Context is closed, record it to remove it from pool safely later
                             logger.warning(f"Context {slot.context_id} is closed, removing from pool: {e}")
-                            if slot in self.contexts:
-                                self.contexts.remove(slot)
+                            to_remove_ids.add(slot.context_id)
                             # Do not break here so we can keep looking for other warm slots
                 
+                # Process any accumulated removals before continuing
+                if to_remove_ids:
+                    self.contexts[:] = [s for s in self.contexts if s.context_id not in to_remove_ids]
+
                 # 2. Check if we have room to spawn
                 total_projected = len(self.contexts) + self._pending_spawns
                 if total_projected < self.max_contexts:
@@ -343,8 +353,9 @@ class BrowserPool:
                 if not slot.dedicated and (current_time - slot.created_at) > self.context_idle_timeout:
                     to_remove.append(slot)
                     
-            for slot in to_remove:
-                self.contexts.remove(slot)
+            if to_remove:
+                to_remove_ids = {s.context_id for s in to_remove}
+                self.contexts[:] = [s for s in self.contexts if s.context_id not in to_remove_ids]
 
         # Do the heavy closing outside the lock with timeouts
         for slot in to_remove:
