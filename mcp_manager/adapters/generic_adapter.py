@@ -218,6 +218,7 @@ class GenericAdapter:
             return
 
         try:
+            import re
             logger.info(f"Attempting to select '{model_name}' mode...")
 
             picker_selectors = self.get_all_selectors("mode-picker")
@@ -235,6 +236,13 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Verify if the desired state is already active
+                picker_text = await picker_btn.inner_text()
+                if picker_text and re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', picker_text):
+                    logger.info(f"Mode '{model_name}' is already active, skipping menu open.")
+                    return
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
@@ -256,7 +264,7 @@ class GenericAdapter:
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if model_name in item_text:
+                    if re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', item_text):
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
