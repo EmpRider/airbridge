@@ -4,6 +4,7 @@ Replaces the old Adapter pattern.
 """
 import asyncio
 import logging
+import re
 from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response, fast_input
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,15 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Check if the desired mode is already active before unconditionally
+                # clicking the menu and waiting for items. This saves significant time.
+                picker_text = await picker_btn.inner_text()
+                pattern = r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])'
+                if re.search(pattern, picker_text):
+                    logger.info(f"Model '{model_name}' is already active, skipping menu interaction.")
+                    return
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
@@ -256,7 +266,10 @@ class GenericAdapter:
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if model_name in item_text:
+                    # Use regex with negative lookarounds to prevent false positives
+                    # with overlapping model names (e.g., "GPT-4" matching "GPT-4-turbo")
+                    pattern = r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])'
+                    if re.search(pattern, item_text):
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
