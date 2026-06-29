@@ -217,6 +217,8 @@ class GenericAdapter:
         if not model_name:
             return
 
+        import re
+
         try:
             logger.info(f"Attempting to select '{model_name}' mode...")
 
@@ -235,6 +237,14 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Verify if desired model is already active before clicking.
+                # This saves a full network roundtrip (click -> wait -> get items) when no change is needed.
+                picker_text = await picker_btn.inner_text()
+                if re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', picker_text):
+                    logger.info(f"Mode '{model_name}' is already active. Skipping selection.")
+                    return
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
@@ -256,7 +266,8 @@ class GenericAdapter:
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if model_name in item_text:
+                    # OPTIMIZATION: Use robust regex to prevent false positive overlapping names (e.g., GPT-4 vs GPT-4-turbo)
+                    if re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', item_text):
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
