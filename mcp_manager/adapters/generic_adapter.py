@@ -4,6 +4,7 @@ Replaces the old Adapter pattern.
 """
 import asyncio
 import logging
+import re
 from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response, fast_input
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,18 @@ class GenericAdapter:
             try:
                 picker_btn = page.locator(combined_picker).first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Check if the desired mode is already active
+                # This saves an expensive UI interaction (click, wait, find) if we are already in the right mode
+                try:
+                    current_picker_text = await picker_btn.inner_text()
+                    pattern = r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])'
+                    if current_picker_text and re.search(pattern, current_picker_text, re.IGNORECASE):
+                        logger.info(f"Mode '{model_name}' is already active, skipping menu interaction")
+                        return
+                except Exception as e:
+                    logger.debug(f"Could not extract picker text to verify active mode: {e}")
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
@@ -253,10 +266,11 @@ class GenericAdapter:
                 all_texts = await items.all_inner_texts()
                 logger.debug(f"Found {len(all_texts)} mode items")
 
+                pattern = r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])'
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if model_name in item_text:
+                    if re.search(pattern, item_text, re.IGNORECASE):
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
