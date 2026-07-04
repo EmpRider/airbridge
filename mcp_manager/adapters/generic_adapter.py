@@ -2,6 +2,7 @@
 Generic adapter - Playwright-based browser automation driven by config.json.
 Replaces the old Adapter pattern.
 """
+import re
 import asyncio
 import logging
 from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response, fast_input
@@ -234,6 +235,17 @@ class GenericAdapter:
             combined_picker = ", ".join(picker_selectors)
             try:
                 picker_btn = page.locator(combined_picker).first
+
+                # ⚡ Bolt: Pre-verify UI state. Check if model is already selected
+                # before waiting 15s or clicking to open menus.
+                try:
+                    current_text = await picker_btn.inner_text(timeout=2000)
+                    if re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', current_text):
+                        logger.info(f"Model '{model_name}' is already selected, skipping picker click.")
+                        return
+                except Exception as e:
+                    logger.debug(f"Could not pre-verify current mode text: {e}")
+
                 await picker_btn.wait_for(state="visible", timeout=15000)
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
@@ -256,7 +268,8 @@ class GenericAdapter:
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if model_name in item_text:
+                    # ⚡ Bolt: Robust regex match to prevent false positives with overlapping names
+                    if re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', item_text):
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
