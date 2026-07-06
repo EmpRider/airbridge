@@ -4,6 +4,7 @@ Replaces the old Adapter pattern.
 """
 import asyncio
 import logging
+import re
 from mcp_manager.utils import human_type, random_delay, get_element_count, wait_for_response, fast_input
 
 logger = logging.getLogger(__name__)
@@ -234,7 +235,19 @@ class GenericAdapter:
             combined_picker = ", ".join(picker_selectors)
             try:
                 picker_btn = page.locator(combined_picker).first
+
                 await picker_btn.wait_for(state="visible", timeout=15000)
+
+                # OPTIMIZATION: Pre-verify current state to avoid expensive menu clicks
+                try:
+                    current_text = await picker_btn.inner_text()
+                    # Use robust regex matching to avoid false positives (e.g., 'GPT-4' matching 'GPT-4-turbo')
+                    if current_text and re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', current_text, re.IGNORECASE):
+                        logger.info(f"Mode '{model_name}' is already active, skipping menu selection.")
+                        return
+                except Exception as e:
+                    logger.debug(f"Pre-verification inner_text failed: {e}")
+
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
@@ -256,7 +269,8 @@ class GenericAdapter:
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if model_name in item_text:
+                    # Use robust regex matching to avoid false positives (e.g., 'GPT-4' matching 'GPT-4-turbo')
+                    if re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', item_text, re.IGNORECASE):
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
