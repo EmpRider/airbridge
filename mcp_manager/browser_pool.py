@@ -165,6 +165,7 @@ class BrowserPool:
             should_spawn = False
             
             async with self.lock:
+                closed_ids = set()
                 # Iterate over a shallow copy to safely mutate self.contexts internally if closed
                 for slot in list(self.contexts):
                     if slot.dedicated:
@@ -175,14 +176,18 @@ class BrowserPool:
                             # Try to access the context to verify it's still valid
                             _ = slot.context.pages
                             slot.request_count += 1
+                            if closed_ids:
+                                self.contexts[:] = [s for s in self.contexts if s.context_id not in closed_ids]
                             return slot
                         except Exception as e:
                             # Context is closed, remove it from pool safely
                             logger.warning(f"Context {slot.context_id} is closed, removing from pool: {e}")
-                            if slot in self.contexts:
-                                self.contexts.remove(slot)
+                            closed_ids.add(slot.context_id)
                             # Do not break here so we can keep looking for other warm slots
                 
+                if closed_ids:
+                    self.contexts[:] = [s for s in self.contexts if s.context_id not in closed_ids]
+
                 # 2. Check if we have room to spawn
                 total_projected = len(self.contexts) + self._pending_spawns
                 if total_projected < self.max_contexts:
