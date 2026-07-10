@@ -343,8 +343,11 @@ class BrowserPool:
                 if not slot.dedicated and (current_time - slot.created_at) > self.context_idle_timeout:
                     to_remove.append(slot)
                     
-            for slot in to_remove:
-                self.contexts.remove(slot)
+            if to_remove:
+                # OPTIMIZATION: Replace O(n^2) list.remove() in a loop with O(n) set lookup
+                # and slice assignment. Use context_id instead of object to prevent unhashable type issues.
+                remove_ids = {s.context_id for s in to_remove}
+                self.contexts[:] = [s for s in self.contexts if s.context_id not in remove_ids]
 
         # Do the heavy closing outside the lock with timeouts
         for slot in to_remove:
