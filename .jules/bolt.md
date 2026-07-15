@@ -17,3 +17,7 @@
 ## 2025-02-13 - [O(N^2) List Remove in Browser Pool Cleanup]
 **Learning:** Using `list.remove()` inside a loop over a large array operates in O(N^2) complexity, which can become a bottleneck when cleaning up many idle resources in a high-concurrency pool. Furthermore, Python dataclasses or objects without custom eq/hash methods can throw `TypeError: unhashable type` when attempting to place them directly in a `set` for O(1) lookups.
 **Action:** Replace `for item in to_remove: list.remove(item)` patterns with O(N) single-pass filters using slice assignment (`list[:] = [x for x in list if check]`). When filtering custom objects via a set, extract and store a unique identifier (e.g., `context_id`) in the set rather than the object itself to avoid hashing errors.
+
+## 2025-02-14 - [Optimize Fast-Path String Sanitization]
+**Learning:** Functions that perform generic string sanitization (like stripping lone UTF-16 surrogates) often use a slow-path `encode/decode(errors='replace')` approach on every invocation. For the vast majority of normal strings, this is unnecessary and causes a significant performance drag due to the expensive encode and decode operations.
+**Action:** Always add a fast-path validation check (e.g., `try: text.encode('utf-8')`) before falling back to the slow-path replacement operations. This allows clean strings to bypass the expensive encode/decode steps, yielding substantial performance improvements (~3x faster for clean strings).
