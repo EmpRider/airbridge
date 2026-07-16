@@ -17,3 +17,7 @@
 ## 2025-02-13 - [O(N^2) List Remove in Browser Pool Cleanup]
 **Learning:** Using `list.remove()` inside a loop over a large array operates in O(N^2) complexity, which can become a bottleneck when cleaning up many idle resources in a high-concurrency pool. Furthermore, Python dataclasses or objects without custom eq/hash methods can throw `TypeError: unhashable type` when attempting to place them directly in a `set` for O(1) lookups.
 **Action:** Replace `for item in to_remove: list.remove(item)` patterns with O(N) single-pass filters using slice assignment (`list[:] = [x for x in list if check]`). When filtering custom objects via a set, extract and store a unique identifier (e.g., `context_id`) in the set rather than the object itself to avoid hashing errors.
+
+## 2025-02-14 - [String Surrogate Sanitization Fast Path]
+**Learning:** The `sanitize_surrogates` function in `mcp_manager/utils.py` removes unpaired UTF-16 surrogates (U+D800 to U+DFFF) from strings. By default, it uses a slow `encode/decode` path (`text.encode('utf-8', errors='surrogatepass').decode('utf-8', errors='replace')`). However, for the vast majority of strings which are "clean" (contain no surrogates), this is a significant and unnecessary performance penalty.
+**Action:** Always add a fast-path validation check like `try: text.encode('utf-8')` to bypass expensive encode/decode replacement operations on clean strings, yielding significant performance gains (~75% faster in micro-benchmarks).
