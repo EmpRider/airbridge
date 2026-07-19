@@ -18,7 +18,14 @@ def sanitize_surrogates(text: str) -> str:
     (e.g. \\udc8f) which cause 'surrogates not allowed' when encoding
     to UTF-8 or serializing to JSON.
     """
-    return text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+    try:
+        # OPTIMIZATION: Fast-path for clean text.
+        # Calling encode("utf-8") is significantly faster than the surrogatepass/replace flow.
+        # If the string encodes successfully, it contains no lone surrogates.
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
 
 
 async def human_type(locator, text: str, min_delay: float = 0.0001, max_delay: float = 0.0005, typo_prob: float = 0.0001):
