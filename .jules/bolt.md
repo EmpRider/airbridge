@@ -17,3 +17,7 @@
 ## 2025-02-13 - [O(N^2) List Remove in Browser Pool Cleanup]
 **Learning:** Using `list.remove()` inside a loop over a large array operates in O(N^2) complexity, which can become a bottleneck when cleaning up many idle resources in a high-concurrency pool. Furthermore, Python dataclasses or objects without custom eq/hash methods can throw `TypeError: unhashable type` when attempting to place them directly in a `set` for O(1) lookups.
 **Action:** Replace `for item in to_remove: list.remove(item)` patterns with O(N) single-pass filters using slice assignment (`list[:] = [x for x in list if check]`). When filtering custom objects via a set, extract and store a unique identifier (e.g., `context_id`) in the set rather than the object itself to avoid hashing errors.
+
+## 2025-02-14 - [Fast-Path Surrogate Sanitization]
+**Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
+**Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
