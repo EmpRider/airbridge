@@ -21,3 +21,7 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+
+## 2025-02-15 - [Missed Async Offload in Dedicated Session Teardown]
+**Learning:** Even when background pool cleanup and standard context eviction offload their blocking I/O (like `shutil.rmtree`), explicit teardown paths for dedicated resources (like session-owned contexts) can easily miss this pattern. A synchronous `self._cleanup_pool_profile()` call in `release_dedicated` creates a hidden stall on the main event loop when clients end chat sessions.
+**Action:** Always audit both the background lifecycle managers (e.g., cleanup loops) AND explicit resource release methods (e.g., `release_dedicated`) for hidden synchronous I/O, ensuring `await asyncio.to_thread()` is applied consistently across all teardown paths.
