@@ -246,6 +246,15 @@ async def mcp_server():
     session_manager = SessionManager(pool)
     await session_manager.start()
 
+    # ⚡ Bolt: Pre-load the adapter config asynchronously during startup.
+    # This prevents a blocking synchronous file I/O (json.load) on the first incoming query request.
+    from mcp_manager.adapters.adapter_factory import load_config
+    try:
+        await asyncio.to_thread(load_config)
+        logger.info("Adapter configuration pre-loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to pre-load adapter configuration: {e}")
+
     try:
         while True:
             line = await asyncio.to_thread(sys.stdin.readline)
