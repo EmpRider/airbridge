@@ -55,9 +55,9 @@ class GenericAdapter:
         if not selectors:
             logger.debug("No temp-chat selectors configured, skipping")
             return
-        combined = ", ".join(selectors)
+        combined_locator = self._get_combined_locator(page, selectors)
         try:
-            btn = page.locator(combined).first
+            btn = combined_locator.first
             await btn.wait_for(state="visible", timeout=5000)
             # Guard against double-toggle: check if already active
             is_pressed = await btn.get_attribute("aria-pressed")
@@ -80,6 +80,19 @@ class GenericAdapter:
     def get_all_selectors(self, key):
         """Get all selectors for a given key to try in order."""
         return self.selectors.get(key, [])
+
+    def _get_combined_locator(self, page, selectors):
+        """
+        Safely combine a list of CSS selectors using locator.or_().
+        This avoids syntax errors from joining strings with commas and allows
+        single-pass evaluation in Playwright.
+        """
+        if not selectors:
+            return None
+        locator = page.locator(selectors[0])
+        for sel in selectors[1:]:
+            locator = locator.or_(page.locator(sel))
+        return locator
 
     def __repr__(self):
         return f"<{self.__class__.__name__} task='{self.task_name}' adapter='{self.adapter_name}'>"
@@ -191,13 +204,17 @@ class GenericAdapter:
 
     async def _needs_login(self, page) -> bool:
         """Check if the sign-in element from config exists on the page."""
-        for sel in self.get_all_selectors("sign-in"):
-            try:
-                if await page.locator(sel).count() > 0:
-                    logger.info(f"Login required: found sign-in element '{sel}'")
-                    return True
-            except Exception:
-                pass
+        selectors = self.get_all_selectors("sign-in")
+        if not selectors:
+            return False
+
+        combined = self._get_combined_locator(page, selectors)
+        try:
+            if await combined.count() > 0:
+                logger.info("Login required: found sign-in element(s)")
+                return True
+        except Exception:
+            pass
         return False
 
     async def _wait_for_input(self, page):
@@ -206,7 +223,8 @@ class GenericAdapter:
         if not selectors:
             return None
         try:
-            field = page.locator(", ".join(selectors)).first
+            combined_locator = self._get_combined_locator(page, selectors)
+            field = combined_locator.first
             await field.wait_for(state="visible", timeout=30000)
             return field
         except Exception as e:
@@ -232,9 +250,9 @@ class GenericAdapter:
                 logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
                 return
 
-            combined_picker = ", ".join(picker_selectors)
+            combined_picker = self._get_combined_locator(page, picker_selectors)
             try:
-                picker_btn = page.locator(combined_picker).first
+                picker_btn = combined_picker.first
                 await picker_btn.wait_for(state="visible", timeout=15000)
 
                 # Check if the desired mode is already selected before clicking
@@ -249,14 +267,14 @@ class GenericAdapter:
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
-                combined_items = ", ".join(item_selectors)
-                await page.locator(combined_items).first.wait_for(state="visible", timeout=10000)
+                combined_items = self._get_combined_locator(page, item_selectors)
+                await combined_items.first.wait_for(state="visible", timeout=10000)
             except Exception as e:
                 logger.warning(f"Could not click mode picker or wait for menu: {e}. Mode may already be selected.")
                 return
 
             try:
-                items = page.locator(combined_items)
+                items = combined_items
 
                 # OPTIMIZATION: Use all_inner_texts() to fetch all texts in a single network
                 # round-trip instead of N+1 await item.inner_text() calls inside a loop.
