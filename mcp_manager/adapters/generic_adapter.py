@@ -55,9 +55,11 @@ class GenericAdapter:
         if not selectors:
             logger.debug("No temp-chat selectors configured, skipping")
             return
-        combined = ", ".join(selectors)
+        loc = page.locator(selectors[0])
+        for sel in selectors[1:]:
+            loc = loc.or_(page.locator(sel))
         try:
-            btn = page.locator(combined).first
+            btn = loc.first
             await btn.wait_for(state="visible", timeout=5000)
             # Guard against double-toggle: check if already active
             is_pressed = await btn.get_attribute("aria-pressed")
@@ -191,13 +193,18 @@ class GenericAdapter:
 
     async def _needs_login(self, page) -> bool:
         """Check if the sign-in element from config exists on the page."""
-        for sel in self.get_all_selectors("sign-in"):
-            try:
-                if await page.locator(sel).count() > 0:
-                    logger.info(f"Login required: found sign-in element '{sel}'")
-                    return True
-            except Exception:
-                pass
+        selectors = self.get_all_selectors("sign-in")
+        if not selectors:
+            return False
+        try:
+            loc = page.locator(selectors[0])
+            for sel in selectors[1:]:
+                loc = loc.or_(page.locator(sel))
+            if await loc.count() > 0:
+                logger.info("Login required: found sign-in element")
+                return True
+        except Exception:
+            pass
         return False
 
     async def _wait_for_input(self, page):
@@ -206,7 +213,10 @@ class GenericAdapter:
         if not selectors:
             return None
         try:
-            field = page.locator(", ".join(selectors)).first
+            loc = page.locator(selectors[0])
+            for sel in selectors[1:]:
+                loc = loc.or_(page.locator(sel))
+            field = loc.first
             await field.wait_for(state="visible", timeout=30000)
             return field
         except Exception as e:
@@ -232,9 +242,11 @@ class GenericAdapter:
                 logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
                 return
 
-            combined_picker = ", ".join(picker_selectors)
+            loc_picker = page.locator(picker_selectors[0])
+            for sel in picker_selectors[1:]:
+                loc_picker = loc_picker.or_(page.locator(sel))
             try:
-                picker_btn = page.locator(combined_picker).first
+                picker_btn = loc_picker.first
                 await picker_btn.wait_for(state="visible", timeout=15000)
 
                 # Check if the desired mode is already selected before clicking
@@ -249,14 +261,16 @@ class GenericAdapter:
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
-                combined_items = ", ".join(item_selectors)
-                await page.locator(combined_items).first.wait_for(state="visible", timeout=10000)
+                loc_items = page.locator(item_selectors[0])
+                for sel in item_selectors[1:]:
+                    loc_items = loc_items.or_(page.locator(sel))
+                await loc_items.first.wait_for(state="visible", timeout=10000)
             except Exception as e:
                 logger.warning(f"Could not click mode picker or wait for menu: {e}. Mode may already be selected.")
                 return
 
             try:
-                items = page.locator(combined_items)
+                items = loc_items
 
                 # OPTIMIZATION: Use all_inner_texts() to fetch all texts in a single network
                 # round-trip instead of N+1 await item.inner_text() calls inside a loop.
