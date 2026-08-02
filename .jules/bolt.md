@@ -21,3 +21,7 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+
+## 2024-05-28 - Avoid sorting for single extremum finding
+**Learning:** Using `.sort()` to find the oldest or smallest element in an array adds unnecessary O(N log N) overhead when only a single extremum is needed.
+**Action:** Use the built-in `min(iterable, key=...)` or `max()` functions instead, which operate in O(N) time complexity.
