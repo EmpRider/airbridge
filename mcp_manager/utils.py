@@ -60,6 +60,19 @@ async def fast_input(page, input_field, text: str):
 
 
 
+def combine_locators(page, selectors: List[str]):
+    """Safely combine multiple fallback Playwright selectors into a single locator.
+
+    Prevents N+1 query patterns and syntax errors caused by naive string joins (', '.join).
+    """
+    if not selectors:
+        return None
+    loc = page.locator(selectors[0])
+    for sel in selectors[1:]:
+        loc = loc.or_(page.locator(sel))
+    return loc
+
+
 async def get_element_count(page, selectors: List[str]) -> int:
     """
     Count DOM elements matching the first successful selector.
