@@ -13,6 +13,7 @@ import asyncio
 import logging
 from typing import Optional, Dict, Any
 from playwright.async_api import BrowserContext, Page
+from mcp_manager.utils import combine_locators
 
 logger = logging.getLogger(__name__)
 
@@ -208,14 +209,20 @@ class LoginHandler:
 
             selectors = success_indicators.get("selectors", [])
             if selectors:
-                for selector in selectors:
-                    try:
-                        count = await page.locator(selector).count()
-                        if count > 0:
-                            logger.info(f"Login success detected: found selector '{selector}'")
-                            return True
-                    except:
-                        pass
+                try:
+                    loc = combine_locators(page, selectors)
+                    if await loc.count() > 0:
+                        logger.info("Login success detected: found selector match")
+                        return True
+                except Exception:
+                    # Fallback to sequential check if combined query fails due to a bad selector
+                    for selector in selectors:
+                        try:
+                            if await page.locator(selector).count() > 0:
+                                logger.info(f"Login success detected: found selector '{selector}'")
+                                return True
+                        except Exception:
+                            pass
 
             return False
 
