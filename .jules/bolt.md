@@ -21,3 +21,7 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+
+## 2025-02-15 - [Python Heredoc Indentation in Scripts]
+**Learning:** When creating Python patch scripts using `cat << 'EOF'` inside a markdown list within an execution plan, do not indent the heredoc block to align with the list. Leading whitespace causes `IndentationError`s and prevents exact string matching. Keep the heredoc content flush with the left margin.
+**Action:** Always ensure heredoc blocks for Python code in bash scripts start at the 0th column and contain zero leading whitespace from the markdown formatting.
