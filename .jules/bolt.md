@@ -21,3 +21,7 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+
+## 2025-02-15 - [Batch Playwright Locators to Prevent N+1 Queries]
+**Learning:** When checking multiple fallback UI selectors in Playwright, looping and evaluating them sequentially creates an N+1 query pattern where each check is a separate network round-trip. This slows down operations like `_needs_login` that test many potential selectors.
+**Action:** Always batch locators programmatically using `locator.or_()` rather than evaluating them sequentially. Because `locator.or_()` throws a SyntaxError if any selector in the batch is invalid, wrap the combined query in a `try...except` block and fall back to sequential checking to maintain fault tolerance. Never combine selectors by joining strings with commas (`", ".join()`).
