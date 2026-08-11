@@ -55,9 +55,25 @@ class GenericAdapter:
         if not selectors:
             logger.debug("No temp-chat selectors configured, skipping")
             return
-        combined = ", ".join(selectors)
         try:
-            btn = page.locator(combined).first
+            # OPTIMIZATION: Use locator.or_() to safely batch selectors
+            try:
+                btn = page.locator(selectors[0])
+                for sel in selectors[1:]:
+                    btn = btn.or_(page.locator(sel))
+                btn = btn.first
+            except Exception:
+                # Fallback to the first available selector if batching fails (e.g. XPath/text mixed)
+                for sel in selectors:
+                    try:
+                        if await page.locator(sel).count() > 0:
+                            btn = page.locator(sel).first
+                            break
+                    except Exception:
+                        continue
+                else:
+                    btn = page.locator(selectors[0]).first
+
             await btn.wait_for(state="visible", timeout=5000)
             # Guard against double-toggle: check if already active
             is_pressed = await btn.get_attribute("aria-pressed")
@@ -206,7 +222,24 @@ class GenericAdapter:
         if not selectors:
             return None
         try:
-            field = page.locator(", ".join(selectors)).first
+            # OPTIMIZATION: Use locator.or_() to safely batch selectors
+            try:
+                field = page.locator(selectors[0])
+                for sel in selectors[1:]:
+                    field = field.or_(page.locator(sel))
+                field = field.first
+            except Exception:
+                # Fallback sequentially
+                for sel in selectors:
+                    try:
+                        if await page.locator(sel).count() > 0:
+                            field = page.locator(sel).first
+                            break
+                    except Exception:
+                        continue
+                else:
+                    field = page.locator(selectors[0]).first
+
             await field.wait_for(state="visible", timeout=30000)
             return field
         except Exception as e:
@@ -232,9 +265,25 @@ class GenericAdapter:
                 logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
                 return
 
-            combined_picker = ", ".join(picker_selectors)
             try:
-                picker_btn = page.locator(combined_picker).first
+                # OPTIMIZATION: Use locator.or_() to safely batch selectors
+                try:
+                    picker_btn = page.locator(picker_selectors[0])
+                    for sel in picker_selectors[1:]:
+                        picker_btn = picker_btn.or_(page.locator(sel))
+                    picker_btn = picker_btn.first
+                except Exception:
+                    # Fallback sequentially
+                    for sel in picker_selectors:
+                        try:
+                            if await page.locator(sel).count() > 0:
+                                picker_btn = page.locator(sel).first
+                                break
+                        except Exception:
+                            continue
+                    else:
+                        picker_btn = page.locator(picker_selectors[0]).first
+
                 await picker_btn.wait_for(state="visible", timeout=15000)
 
                 # Check if the desired mode is already selected before clicking
@@ -249,8 +298,24 @@ class GenericAdapter:
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
-                combined_items = ", ".join(item_selectors)
-                await page.locator(combined_items).first.wait_for(state="visible", timeout=10000)
+                # OPTIMIZATION: Use locator.or_() to safely batch selectors
+                try:
+                    items_loc = page.locator(item_selectors[0])
+                    for sel in item_selectors[1:]:
+                        items_loc = items_loc.or_(page.locator(sel))
+                except Exception:
+                    # Fallback to the first working selector sequentially
+                    for sel in item_selectors:
+                        try:
+                            if await page.locator(sel).count() > 0:
+                                items_loc = page.locator(sel)
+                                break
+                        except Exception:
+                            continue
+                    else:
+                        items_loc = page.locator(item_selectors[0])
+
+                await items_loc.first.wait_for(state="visible", timeout=10000)
             except Exception as e:
                 logger.warning(f"Could not click mode picker or wait for menu: {e}. Mode may already be selected.")
                 return
