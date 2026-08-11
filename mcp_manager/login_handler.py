@@ -208,14 +208,30 @@ class LoginHandler:
 
             selectors = success_indicators.get("selectors", [])
             if selectors:
-                for selector in selectors:
+                try:
+                    # OPTIMIZATION: Use locator.or_() to safely batch selectors for existence checking
                     try:
-                        count = await page.locator(selector).count()
-                        if count > 0:
-                            logger.info(f"Login success detected: found selector '{selector}'")
-                            return True
-                    except:
-                        pass
+                        loc = page.locator(selectors[0])
+                        for sel in selectors[1:]:
+                            loc = loc.or_(page.locator(sel))
+                    except Exception:
+                        # Fallback to checking each one sequentially
+                        for selector in selectors:
+                            try:
+                                count = await page.locator(selector).count()
+                                if count > 0:
+                                    logger.info(f"Login success detected: found selector '{selector}'")
+                                    return True
+                            except:
+                                pass
+                        return False
+
+                    if await loc.count() > 0:
+                        logger.info(f"Login success detected: found one of the selectors")
+                        return True
+                except Exception as e:
+                    logger.debug(f"Error checking selectors: {e}")
+                    pass
 
             return False
 
