@@ -55,10 +55,36 @@ class GenericAdapter:
         if not selectors:
             logger.debug("No temp-chat selectors configured, skipping")
             return
-        combined = ", ".join(selectors)
         try:
-            btn = page.locator(combined).first
+            # OPTIMIZATION: Safely batch locators using locator.or_() to avoid N+1 queries.
+            # We wrap in try-except for SyntaxError specifically, preventing timeouts from triggering sequential fallback.
+            btn = page.locator(selectors[0])
+            for sel in selectors[1:]:
+                btn = btn.or_(page.locator(sel))
+            btn = btn.first
+        except Exception as e:
+            # Only fall back if locator building failed (e.g., SyntaxError).
+            # Do NOT fall back on timeouts to prevent N+1 timeout amplification.
+            logger.debug(f"Batched temp-chat locator syntax failed: {e}. Falling back to sequential creation.")
+            btn = None
+            for sel in selectors:
+                try:
+                    # Test if locator syntax is valid
+                    btn = page.locator(sel).first
+                    break
+                except Exception:
+                    continue
+            if not btn:
+                logger.warning("Could not enable temp chat: no valid selectors")
+                return
+
+        try:
             await btn.wait_for(state="visible", timeout=5000)
+        except Exception as e:
+            logger.warning(f"Could not enable temp chat: wait timeout or error {e}")
+            return
+
+        try:
             # Guard against double-toggle: check if already active
             is_pressed = await btn.get_attribute("aria-pressed")
             if is_pressed == "true":
@@ -68,7 +94,7 @@ class GenericAdapter:
             logger.info("Temp chat enabled")
             await asyncio.sleep(0.5)
         except Exception as e:
-            logger.warning(f"Could not enable temp chat: {e}")
+            logger.warning(f"Could not click temp chat toggle: {e}")
 
     def get_selector(self, key, fallback=None):
         """Get the first valid selector for a given key from the config."""
@@ -206,7 +232,25 @@ class GenericAdapter:
         if not selectors:
             return None
         try:
-            field = page.locator(", ".join(selectors)).first
+            # OPTIMIZATION: Safely batch locators using locator.or_()
+            field = page.locator(selectors[0])
+            for sel in selectors[1:]:
+                field = field.or_(page.locator(sel))
+            field = field.first
+        except Exception as e:
+            logger.debug(f"Batched input locator syntax failed: {e}. Falling back to sequential creation.")
+            field = None
+            for sel in selectors:
+                try:
+                    field = page.locator(sel).first
+                    break
+                except Exception:
+                    continue
+            if not field:
+                logger.error("Input field configuration invalid: no valid selectors")
+                return None
+
+        try:
             await field.wait_for(state="visible", timeout=30000)
             return field
         except Exception as e:
@@ -232,11 +276,32 @@ class GenericAdapter:
                 logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
                 return
 
-            combined_picker = ", ".join(picker_selectors)
             try:
-                picker_btn = page.locator(combined_picker).first
-                await picker_btn.wait_for(state="visible", timeout=15000)
+                # OPTIMIZATION: Safely batch locators using locator.or_()
+                picker_btn = page.locator(picker_selectors[0])
+                for sel in picker_selectors[1:]:
+                    picker_btn = picker_btn.or_(page.locator(sel))
+                picker_btn = picker_btn.first
+            except Exception as e:
+                logger.debug(f"Batched mode-picker syntax failed: {e}. Falling back to sequential creation.")
+                picker_btn = None
+                for sel in picker_selectors:
+                    try:
+                        picker_btn = page.locator(sel).first
+                        break
+                    except Exception:
+                        continue
+                if not picker_btn:
+                    logger.warning(f"Could not find valid mode picker selectors. Mode may already be selected.")
+                    return
 
+            try:
+                await picker_btn.wait_for(state="visible", timeout=15000)
+            except Exception as e:
+                logger.warning(f"Could not find mode picker: {e}. Mode may already be selected.")
+                return
+
+            try:
                 # Check if the desired mode is already selected before clicking
                 try:
                     current_text = await picker_btn.inner_text()
@@ -248,15 +313,34 @@ class GenericAdapter:
 
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
-
-                combined_items = ", ".join(item_selectors)
-                await page.locator(combined_items).first.wait_for(state="visible", timeout=10000)
             except Exception as e:
-                logger.warning(f"Could not click mode picker or wait for menu: {e}. Mode may already be selected.")
+                logger.warning(f"Could not click mode picker: {e}. Mode may already be selected.")
                 return
 
             try:
-                items = page.locator(combined_items)
+                items = page.locator(item_selectors[0])
+                for sel in item_selectors[1:]:
+                    items = items.or_(page.locator(sel))
+            except Exception as e:
+                logger.debug(f"Batched mode-item syntax failed: {e}. Falling back to sequential creation.")
+                items = None
+                for sel in item_selectors:
+                    try:
+                        items = page.locator(sel)
+                        break
+                    except Exception:
+                        continue
+                if not items:
+                    logger.warning("Could not wait for menu items: no valid selectors")
+                    return
+
+            try:
+                await items.first.wait_for(state="visible", timeout=10000)
+            except Exception as e:
+                logger.warning(f"Could not wait for menu items: {e}")
+                return
+
+            try:
 
                 # OPTIMIZATION: Use all_inner_texts() to fetch all texts in a single network
                 # round-trip instead of N+1 await item.inner_text() calls inside a loop.
