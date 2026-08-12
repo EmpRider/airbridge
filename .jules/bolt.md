@@ -21,3 +21,11 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+
+## 2025-02-15 - [Safe Locator Batching in Playwright]
+**Learning:** When checking multiple fallback UI selectors in Playwright, joining selectors with commas (`", ".join()`) creates a single CSS query, but if any selector is invalid it throws a SyntaxError and fails the entire query.
+**Action:** Always avoid `", ".join()`. Instead, use programmatic batching with `locator.or_()` to safely combine selectors without N+1 sequentially blocking queries. Always wrap this batching in a `try...except` block, and gracefully fall back to checking selectors sequentially if a SyntaxError occurs.
+
+## 2025-02-15 - [Playwright Batching Timeout Amplification]
+**Learning:** When batching Playwright locators using `locator.or_()`, wrapping the locator building and the subsequent `wait_for()` call in the same broad `try...except Exception` block creates a severe performance regression. If a standard `TimeoutError` occurs during `wait_for()`, the catch block interprets it as a batch failure (like a `SyntaxError`) and triggers a sequential fallback loop. This amplifies the timeout penalty from O(1) to O(N), blocking the main event loop significantly longer.
+**Action:** Always strictly isolate the synchronous locator building logic (which can throw `SyntaxError`s if a fallback selector is invalid) from the asynchronous `wait_for()` call. Catch `SyntaxError` or generic exceptions *only* around the `.or_()` chain to trigger the sequential creation fallback. Let `TimeoutError`s from `wait_for()` be handled separately or propagate normally.
