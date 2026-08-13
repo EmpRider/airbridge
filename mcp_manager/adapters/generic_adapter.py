@@ -55,9 +55,11 @@ class GenericAdapter:
         if not selectors:
             logger.debug("No temp-chat selectors configured, skipping")
             return
-        combined = ", ".join(selectors)
         try:
-            btn = page.locator(combined).first
+            btn = page.locator(selectors[0])
+            for selector in selectors[1:]:
+                btn = btn.or_(page.locator(selector))
+            btn = btn.first
             await btn.wait_for(state="visible", timeout=5000)
             # Guard against double-toggle: check if already active
             is_pressed = await btn.get_attribute("aria-pressed")
@@ -206,7 +208,10 @@ class GenericAdapter:
         if not selectors:
             return None
         try:
-            field = page.locator(", ".join(selectors)).first
+            field = page.locator(selectors[0])
+            for selector in selectors[1:]:
+                field = field.or_(page.locator(selector))
+            field = field.first
             await field.wait_for(state="visible", timeout=30000)
             return field
         except Exception as e:
@@ -232,9 +237,11 @@ class GenericAdapter:
                 logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
                 return
 
-            combined_picker = ", ".join(picker_selectors)
             try:
-                picker_btn = page.locator(combined_picker).first
+                picker_btn = page.locator(picker_selectors[0])
+                for selector in picker_selectors[1:]:
+                    picker_btn = picker_btn.or_(page.locator(selector))
+                picker_btn = picker_btn.first
                 await picker_btn.wait_for(state="visible", timeout=15000)
 
                 # Check if the desired mode is already selected before clicking
@@ -248,15 +255,45 @@ class GenericAdapter:
 
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
-
-                combined_items = ", ".join(item_selectors)
-                await page.locator(combined_items).first.wait_for(state="visible", timeout=10000)
             except Exception as e:
-                logger.warning(f"Could not click mode picker or wait for menu: {e}. Mode may already be selected.")
+                logger.warning(f"Could not click mode picker: {e}. Mode may already be selected.")
                 return
 
             try:
-                items = page.locator(combined_items)
+                items = page.locator(item_selectors[0])
+                for selector in item_selectors[1:]:
+                    items = items.or_(page.locator(selector))
+
+                # Check for validity of all locators to avoid SyntaxError if one is invalid
+                try:
+                    await items.first.wait_for(state="visible", timeout=10000)
+                except Exception as eval_err:
+                    if "Unexpected token" in str(eval_err) or "is not a valid selector" in str(eval_err):
+                        raise eval_err
+                    logger.warning(f"Wait for menu failed: {eval_err}")
+                    return
+
+            except Exception as e:
+                if "Unexpected token" in str(e) or "is not a valid selector" in str(e):
+                    # Fallback to checking each item sequentially if we have a bad selector
+                    logger.debug(f"Batched locator failed due to syntax error, falling back to sequential check: {e}")
+                    items = None
+                    for sel in item_selectors:
+                        try:
+                            loc = page.locator(sel)
+                            await loc.first.wait_for(state="visible", timeout=2000)
+                            items = loc
+                            break
+                        except Exception:
+                            pass
+                    if not items:
+                        logger.warning(f"Could not wait for menu sequentially. Mode may already be selected.")
+                        return
+                else:
+                    logger.warning(f"Could not wait for menu: {e}. Mode may already be selected.")
+                    return
+
+            try:
 
                 # OPTIMIZATION: Use all_inner_texts() to fetch all texts in a single network
                 # round-trip instead of N+1 await item.inner_text() calls inside a loop.
