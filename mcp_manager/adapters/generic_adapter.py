@@ -55,10 +55,31 @@ class GenericAdapter:
         if not selectors:
             logger.debug("No temp-chat selectors configured, skipping")
             return
-        combined = ", ".join(selectors)
+
+        btn = None
         try:
-            btn = page.locator(combined).first
+            # Safely batch locators
+            combined_locator = page.locator(selectors[0])
+            for sel in selectors[1:]:
+                combined_locator = combined_locator.or_(page.locator(sel))
+            btn = combined_locator.first
             await btn.wait_for(state="visible", timeout=5000)
+        except Exception:
+            # Fallback to sequential checking if or_() throws due to invalid selectors
+            for sel in selectors:
+                try:
+                    btn_candidate = page.locator(sel).first
+                    await btn_candidate.wait_for(state="visible", timeout=5000)
+                    btn = btn_candidate
+                    break
+                except Exception:
+                    pass
+
+        if not btn:
+             logger.warning("Could not enable temp chat: no button visible")
+             return
+
+        try:
             # Guard against double-toggle: check if already active
             is_pressed = await btn.get_attribute("aria-pressed")
             if is_pressed == "true":
@@ -205,11 +226,25 @@ class GenericAdapter:
         selectors = self.get_all_selectors("message-box")
         if not selectors:
             return None
+
+        field = None
         try:
-            field = page.locator(", ".join(selectors)).first
+            combined_locator = page.locator(selectors[0])
+            for sel in selectors[1:]:
+                combined_locator = combined_locator.or_(page.locator(sel))
+            field = combined_locator.first
             await field.wait_for(state="visible", timeout=30000)
             return field
         except Exception as e:
+            # Fallback to sequential
+            for sel in selectors:
+                try:
+                    field_candidate = page.locator(sel).first
+                    await field_candidate.wait_for(state="visible", timeout=30000)
+                    return field_candidate
+                except Exception:
+                    pass
+
             logger.error(f"Input field not visible: {e}")
             return None
 
@@ -232,10 +267,27 @@ class GenericAdapter:
                 logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
                 return
 
-            combined_picker = ", ".join(picker_selectors)
             try:
-                picker_btn = page.locator(combined_picker).first
+                combined_locator = page.locator(picker_selectors[0])
+                for sel in picker_selectors[1:]:
+                    combined_locator = combined_locator.or_(page.locator(sel))
+                picker_btn = combined_locator.first
                 await picker_btn.wait_for(state="visible", timeout=15000)
+            except Exception:
+                picker_btn = None
+                for sel in picker_selectors:
+                    try:
+                        picker_candidate = page.locator(sel).first
+                        await picker_candidate.wait_for(state="visible", timeout=15000)
+                        picker_btn = picker_candidate
+                        break
+                    except Exception:
+                        pass
+
+                if not picker_btn:
+                     raise Exception("No mode-picker visible")
+
+            try:
 
                 # Check if the desired mode is already selected before clicking
                 try:
@@ -249,14 +301,29 @@ class GenericAdapter:
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
-                combined_items = ", ".join(item_selectors)
-                await page.locator(combined_items).first.wait_for(state="visible", timeout=10000)
+                try:
+                    combined_items_locator = page.locator(item_selectors[0])
+                    for sel in item_selectors[1:]:
+                        combined_items_locator = combined_items_locator.or_(page.locator(sel))
+                    await combined_items_locator.first.wait_for(state="visible", timeout=10000)
+                    items = combined_items_locator
+                except Exception:
+                    items = None
+                    for sel in item_selectors:
+                        try:
+                            candidate = page.locator(sel)
+                            await candidate.first.wait_for(state="visible", timeout=10000)
+                            items = candidate
+                            break
+                        except Exception:
+                            pass
+                    if not items:
+                        raise Exception("No mode items visible")
             except Exception as e:
                 logger.warning(f"Could not click mode picker or wait for menu: {e}. Mode may already be selected.")
                 return
 
             try:
-                items = page.locator(combined_items)
 
                 # OPTIMIZATION: Use all_inner_texts() to fetch all texts in a single network
                 # round-trip instead of N+1 await item.inner_text() calls inside a loop.
