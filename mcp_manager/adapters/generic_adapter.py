@@ -46,6 +46,24 @@ class GenericAdapter:
                 flat[key] = value
         return flat
 
+    def _create_batched_locator(self, page, selectors):
+        """
+        ⚡ Bolt: Batch Playwright locators using .or_() to optimize fallback checking.
+        Performance Impact: Prevents N+1 query latency and suppresses exceptions from invalid selectors.
+        """
+        loc = None
+        for sel in selectors:
+            try:
+                new_loc = page.locator(sel)
+                if loc is None:
+                    loc = new_loc
+                else:
+                    loc = loc.or_(new_loc)
+            except Exception as e:
+                logger.debug(f"Skipping invalid selector {sel}: {e}")
+        return loc
+
+
     async def enable_temp_chat(self, page):
         """Click the temp-chat toggle if the preference is enabled."""
         from mcp_manager.browser import get_temp_chat_preference
@@ -55,9 +73,11 @@ class GenericAdapter:
         if not selectors:
             logger.debug("No temp-chat selectors configured, skipping")
             return
-        combined = ", ".join(selectors)
         try:
-            btn = page.locator(combined).first
+            batched_loc = self._create_batched_locator(page, selectors)
+            if batched_loc is None:
+                return
+            btn = batched_loc.first
             await btn.wait_for(state="visible", timeout=5000)
             # Guard against double-toggle: check if already active
             is_pressed = await btn.get_attribute("aria-pressed")
@@ -191,13 +211,20 @@ class GenericAdapter:
 
     async def _needs_login(self, page) -> bool:
         """Check if the sign-in element from config exists on the page."""
-        for sel in self.get_all_selectors("sign-in"):
-            try:
-                if await page.locator(sel).count() > 0:
-                    logger.info(f"Login required: found sign-in element '{sel}'")
-                    return True
-            except Exception:
-                pass
+        selectors = self.get_all_selectors("sign-in")
+        if not selectors:
+            return False
+
+        batched_loc = self._create_batched_locator(page, selectors)
+        if batched_loc is None:
+            return False
+
+        try:
+            if await batched_loc.first.count() > 0:
+                logger.info(f"Login required: found sign-in element")
+                return True
+        except Exception:
+            pass
         return False
 
     async def _wait_for_input(self, page):
@@ -206,7 +233,10 @@ class GenericAdapter:
         if not selectors:
             return None
         try:
-            field = page.locator(", ".join(selectors)).first
+            batched_loc = self._create_batched_locator(page, selectors)
+            if batched_loc is None:
+                return None
+            field = batched_loc.first
             await field.wait_for(state="visible", timeout=30000)
             return field
         except Exception as e:
@@ -232,9 +262,11 @@ class GenericAdapter:
                 logger.warning("No 'mode-item' selectors found in config. Skipping mode selection.")
                 return
 
-            combined_picker = ", ".join(picker_selectors)
             try:
-                picker_btn = page.locator(combined_picker).first
+                batched_picker = self._create_batched_locator(page, picker_selectors)
+                if batched_picker is None:
+                    return
+                picker_btn = batched_picker.first
                 await picker_btn.wait_for(state="visible", timeout=15000)
 
                 # Check if the desired mode is already selected before clicking
@@ -249,14 +281,16 @@ class GenericAdapter:
                 await picker_btn.click()
                 logger.debug("Mode picker clicked successfully")
 
-                combined_items = ", ".join(item_selectors)
-                await page.locator(combined_items).first.wait_for(state="visible", timeout=10000)
+                batched_items = self._create_batched_locator(page, item_selectors)
+                if batched_items is None:
+                    return
+                await batched_items.first.wait_for(state="visible", timeout=10000)
             except Exception as e:
                 logger.warning(f"Could not click mode picker or wait for menu: {e}. Mode may already be selected.")
                 return
 
             try:
-                items = page.locator(combined_items)
+                items = batched_items
 
                 # OPTIMIZATION: Use all_inner_texts() to fetch all texts in a single network
                 # round-trip instead of N+1 await item.inner_text() calls inside a loop.
