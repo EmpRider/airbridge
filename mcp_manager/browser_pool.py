@@ -225,8 +225,8 @@ class BrowserPool:
         if not candidates:
             return False
             
-        candidates.sort(key=lambda s: s.created_at)
-        victim = candidates[0]
+        # OPTIMIZATION: Use O(N) min() instead of O(N log N) sort() to find the oldest context
+        victim = min(candidates, key=lambda s: s.created_at)
         
         # Remove from state immediately so it's out of rotation
         self.contexts.remove(victim)
