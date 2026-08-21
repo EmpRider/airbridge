@@ -21,3 +21,11 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+
+## 2025-02-23 - [Playwright Batched Locators over Network Loops]
+**Learning:** In Python's async Playwright API, `page.locator()` does not throw an exception for malformed CSS selectors at creation time; it only throws during evaluation. Replacing efficient comma-separated strings (`', '.join()`) with a loop that individually evaluates selectors (e.g., `await loc.count()`) to safely chain valid ones with `locator.or_()` introduces a severe N+1 performance regression.
+**Action:** For fallback selectors, use comma-separated strings for batching to avoid unnecessary network round-trips.
+
+## 2025-02-23 - [Playwright Concurrent Locator Evaluation]
+**Learning:** Playwright's comma-separated selector grouping fails if any individual selector inherently contains a comma (e.g. `text="Sign In, Please"`), causing syntax errors. Batching multiple fallback selectors into a single comma-separated string `", ".join(selectors)` breaks the graceful fallback isolation where one malformed selector ruins the entire check.
+**Action:** To optimize N+1 locator loops over network without breaking syntax or fault isolation, use `asyncio.gather(..., return_exceptions=True)` to evaluate individual selectors concurrently in a single batch, preserving the ability to ignore failures on malformed selectors.
