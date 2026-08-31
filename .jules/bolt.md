@@ -21,3 +21,6 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+## 2025-02-15 - [Playwright Concurrent Locator Evaluation]
+**Learning:** Checking multiple fallback selectors inside a `for` loop using `await page.locator(sel).count()` creates an N+1 query pattern where each check requires a full round-trip between the Node.js test runner and the browser. This dramatically slows down checks like `_needs_login` or `_check_success` that run frequently.
+**Action:** Use `await asyncio.gather(*(page.locator(sel).count() for sel in selectors), return_exceptions=True)` to evaluate all selectors concurrently in a single batch over the network, effectively turning O(N) network calls into O(1).
