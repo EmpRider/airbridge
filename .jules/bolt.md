@@ -21,3 +21,7 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+
+## 2024-05-15 - Playwright Locator Count N+1 Optimization
+**Learning:** Evaluating multiple fallback selectors sequentially in a loop (e.g., using `locator(sel).count()`) causes significant latency due to N+1 network round-trips. Grouping them into a single comma-separated string breaks isolation if a selector naturally contains a comma (like text matchers).
+**Action:** Use `asyncio.gather(*(page.locator(sel).count() for sel in selectors), return_exceptions=True)` to evaluate individual selectors concurrently in Python. This preserves fault isolation while drastically reducing network latency for login/element checks.
