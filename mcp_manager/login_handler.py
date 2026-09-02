@@ -208,14 +208,13 @@ class LoginHandler:
 
             selectors = success_indicators.get("selectors", [])
             if selectors:
-                for selector in selectors:
-                    try:
-                        count = await page.locator(selector).count()
-                        if count > 0:
-                            logger.info(f"Login success detected: found selector '{selector}'")
-                            return True
-                    except:
-                        pass
+                results = await asyncio.gather(*(page.locator(sel).count() for sel in selectors), return_exceptions=True)
+                for selector, result in zip(selectors, results):
+                    if isinstance(result, Exception):
+                        continue
+                    if result > 0:
+                        logger.info(f"Login success detected: found selector '{selector}'")
+                        return True
 
             return False
 
