@@ -21,3 +21,6 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+## 2024-05-18 - [Optimization Rejected] O(N log N) full sort is actually faster than O(N) min() with generator
+**Learning:** An optimization that surprisingly DIDN'T work: Replacing `list.sort()` with `min(generator)` to find the oldest context. Python's C-optimized Timsort (`list.sort()`) unexpectedly outperformed `min()` with a generator expression (which required bytecode evaluation).
+**Action:** Do not prematurely replace `list.sort()` with `min()` for small/medium lists in Python without benchmarking, as the C-level optimization often beats theoretical algorithmic improvements involving generator overhead.
