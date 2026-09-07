@@ -240,7 +240,8 @@ class GenericAdapter:
                 # Check if the desired mode is already selected before clicking
                 try:
                     current_text = await picker_btn.inner_text()
-                    if re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', current_text, re.IGNORECASE):
+                    pattern = re.compile(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', re.IGNORECASE)
+                    if pattern.search(current_text):
                         logger.info(f"Mode '{model_name}' is already active, skipping menu click.")
                         return
                 except Exception as e:
@@ -264,10 +265,13 @@ class GenericAdapter:
                 all_texts = await items.all_inner_texts()
                 logger.debug(f"Found {len(all_texts)} mode items")
 
+                # OPTIMIZATION: Pre-compile regex before loop to avoid redundant O(N) compilation
+                pattern = re.compile(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', re.IGNORECASE)
+
                 for i, text in enumerate(all_texts):
                     item_text = text.strip()
                     logger.debug(f"Checking item: '{item_text}'")
-                    if re.search(r'(?<![\w\-])' + re.escape(model_name) + r'(?![\w\-])', item_text, re.IGNORECASE):
+                    if pattern.search(item_text):
                         logger.info(f"Found and clicking '{model_name}' mode: {item_text}")
                         await items.nth(i).click()
                         await asyncio.sleep(1)
