@@ -191,13 +191,23 @@ class GenericAdapter:
 
     async def _needs_login(self, page) -> bool:
         """Check if the sign-in element from config exists on the page."""
-        for sel in self.get_all_selectors("sign-in"):
-            try:
-                if await page.locator(sel).count() > 0:
+        selectors = self.get_all_selectors("sign-in")
+        if not selectors:
+            return False
+
+        try:
+            # OPTIMIZATION: Concurrently evaluate all sign-in selectors
+            counts = await asyncio.gather(
+                *(page.locator(sel).count() for sel in selectors),
+                return_exceptions=True
+            )
+
+            for sel, count in zip(selectors, counts):
+                if isinstance(count, int) and count > 0:
                     logger.info(f"Login required: found sign-in element '{sel}'")
                     return True
-            except Exception:
-                pass
+        except Exception:
+            pass
         return False
 
     async def _wait_for_input(self, page):
