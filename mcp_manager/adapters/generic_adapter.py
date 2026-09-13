@@ -191,13 +191,21 @@ class GenericAdapter:
 
     async def _needs_login(self, page) -> bool:
         """Check if the sign-in element from config exists on the page."""
-        for sel in self.get_all_selectors("sign-in"):
-            try:
-                if await page.locator(sel).count() > 0:
-                    logger.info(f"Login required: found sign-in element '{sel}'")
-                    return True
-            except Exception:
-                pass
+        # Ensure selectors is a list so we can iterate it multiple times
+        selectors = list(self.get_all_selectors("sign-in"))
+        if not selectors:
+            return False
+
+        # ⚡ Bolt: Evaluates multiple Playwright locators concurrently rather than sequentially.
+        # Fixes an N+1 query bottleneck over the Playwright protocol connection, reducing latency
+        # while maintaining fault isolation via return_exceptions=True.
+        results = await asyncio.gather(*(page.locator(sel).count() for sel in selectors), return_exceptions=True)
+
+        for sel, count in zip(selectors, results):
+            if isinstance(count, int) and count > 0:
+                logger.info(f"Login required: found sign-in element '{sel}'")
+                return True
+
         return False
 
     async def _wait_for_input(self, page):
