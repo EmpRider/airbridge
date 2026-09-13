@@ -206,16 +206,17 @@ class LoginHandler:
                         logger.info(f"Login success detected: URL contains '{url_pattern}'")
                         return True
 
-            selectors = success_indicators.get("selectors", [])
+            # Ensure selectors is a list so we can iterate it multiple times
+            selectors = list(success_indicators.get("selectors", []))
             if selectors:
-                for selector in selectors:
-                    try:
-                        count = await page.locator(selector).count()
-                        if count > 0:
-                            logger.info(f"Login success detected: found selector '{selector}'")
-                            return True
-                    except:
-                        pass
+                # ⚡ Bolt: Evaluates multiple Playwright locators concurrently rather than sequentially.
+                # Fixes an N+1 query bottleneck over the Playwright protocol connection, reducing latency
+                # while maintaining fault isolation via return_exceptions=True.
+                results = await asyncio.gather(*(page.locator(sel).count() for sel in selectors), return_exceptions=True)
+                for selector, count in zip(selectors, results):
+                    if isinstance(count, int) and count > 0:
+                        logger.info(f"Login success detected: found selector '{selector}'")
+                        return True
 
             return False
 
