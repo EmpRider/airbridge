@@ -21,3 +21,6 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+## 2025-02-12 - Concurrent Locator Evaluation for Fallback Selectors
+**Learning:** Sequential evaluation of fallback UI selectors using `await page.locator(sel).count()` inside a loop introduces N+1 query performance bottlenecks (O(N) network roundtrips), especially when elements are missing.
+**Action:** Use `asyncio.gather` to execute locator checks concurrently. Wrap the locator calls in an inner async helper function (e.g., `_safe_count`) with a tight `try-except` block to suppress synchronous Playwright errors (like invalid CSS selectors) which would otherwise crash the `gather` setup before it even runs.
