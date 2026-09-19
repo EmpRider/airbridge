@@ -208,14 +208,25 @@ class LoginHandler:
 
             selectors = success_indicators.get("selectors", [])
             if selectors:
-                for selector in selectors:
-                    try:
-                        count = await page.locator(selector).count()
-                        if count > 0:
-                            logger.info(f"Login success detected: found selector '{selector}'")
-                            return True
-                    except:
-                        pass
+                # ⚡ Bolt: Use a comma-separated CSS selector list to avoid N+1 CDP network round-trips
+                # AND avoid Playwright's locator.or_() which throws if any single selector is invalid.
+                # document.querySelectorAll handles comma-separated lists efficiently natively.
+                combined = ", ".join(selectors)
+                try:
+                    count = await page.locator(combined).count()
+                    if count > 0:
+                        logger.info(f"Login success detected: found success selector")
+                        return True
+                except:
+                    # Fallback to individual checks if the combined selector fails to parse
+                    for selector in selectors:
+                        try:
+                            count = await page.locator(selector).count()
+                            if count > 0:
+                                logger.info(f"Login success detected: found selector '{selector}'")
+                                return True
+                        except:
+                            pass
 
             return False
 
