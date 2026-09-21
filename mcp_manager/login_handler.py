@@ -74,7 +74,6 @@ class LoginHandler:
             logger.info(f"No valid session found. Opening login window at: {login_url}")
             login_page = login_context.pages[0] if login_context.pages else await login_context.new_page()
             await login_page.goto(login_url, wait_until="domcontentloaded")
-            await asyncio.sleep(2)
 
             # Wait for user to complete login
             logger.info(f"Waiting up to {timeout} seconds for user login...")
@@ -89,7 +88,6 @@ class LoginHandler:
             app_url = config.get("url")
             if app_url and app_url not in login_page.url:
                 await login_page.goto(app_url, wait_until="domcontentloaded")
-                await asyncio.sleep(2)
 
             # Transfer cookies to the target context so the current page works
             await self._transfer_cookies(login_context, target_context)
@@ -150,7 +148,6 @@ class LoginHandler:
 
             login_page = login_context.pages[0] if login_context.pages else await login_context.new_page()
             await login_page.goto(app_url, wait_until="domcontentloaded")
-            await asyncio.sleep(2)
 
             if await self._check_success(login_page, success_indicators):
                 logger.info("Valid saved session detected")
@@ -190,8 +187,29 @@ class LoginHandler:
     ) -> bool:
         """Check if login was successful. Uses OR logic: any indicator match = success."""
         try:
+            # OPTIMIZATION: Deterministic wait for success selectors instead of fixed sleeps
+            selectors = success_indicators.get("selectors", [])
+            if selectors:
+                combined_selector = ", ".join(selectors)
+                try:
+                    await page.locator(combined_selector).first.wait_for(state="attached", timeout=2000)
+                except Exception:
+                    pass
+
             titles = success_indicators.get("titles", [])
             if titles:
+                # Wait briefly for title to change if we have title indicators
+                try:
+                    for title in titles:
+                        # Try to wait for title, but don't block if it fails
+                        try:
+                            # Not a strict wait, just a quick yield
+                            await page.wait_for_function(f"document.title.includes('{title}')", timeout=500)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
                 page_title = await page.title()
                 page_title = page_title.strip()
                 if page_title in titles:
@@ -206,7 +224,6 @@ class LoginHandler:
                         logger.info(f"Login success detected: URL contains '{url_pattern}'")
                         return True
 
-            selectors = success_indicators.get("selectors", [])
             if selectors:
                 for selector in selectors:
                     try:
