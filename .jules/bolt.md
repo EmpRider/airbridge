@@ -21,3 +21,6 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+## 2025-02-15 - [Remove Synchronous Delays Post-Navigation]
+**Learning:** Hardcoded `await asyncio.sleep(2)` calls immediately following Playwright's `await page.goto(..., wait_until="domcontentloaded")` act as unnecessary synchronous bottlenecks. Playwright's navigation strategies combined with subsequent element-specific `wait_for` conditions (or DOM checks) already provide robust synchronization, making these blanket delays redundant and harmful to performance (especially during critical paths like initialization or login).
+**Action:** Rely strictly on Playwright's native condition checking (e.g., waiting for elements to be visible or counts to reach expected values) rather than injecting artificial, fixed-duration delays post-navigation.

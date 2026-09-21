@@ -91,7 +91,6 @@ class GenericAdapter:
         target_url = self.url
         # networkidle to minimize explicit sleeps
         await page.goto(target_url, wait_until="domcontentloaded")
-        await asyncio.sleep(2)
 
         if await self._needs_login(page):
             logger.info("Login required at session start, delegating to login handler...")
@@ -106,7 +105,6 @@ class GenericAdapter:
                 raise RuntimeError("Login failed at session start")
             # Reload page to apply injected cookies
             await page.goto(target_url, wait_until="domcontentloaded")
-            await asyncio.sleep(2)
 
         input_field = await self._wait_for_input(page)
         if input_field is None:
@@ -191,7 +189,28 @@ class GenericAdapter:
 
     async def _needs_login(self, page) -> bool:
         """Check if the sign-in element from config exists on the page."""
-        for sel in self.get_all_selectors("sign-in"):
+        # OPTIMIZATION: Instead of a fixed sleep before calling this, wait up to 2 seconds
+        # for either the input box OR the sign-in element to appear to avoid race conditions.
+
+        sign_in_selectors = self.get_all_selectors("sign-in")
+        if not sign_in_selectors:
+            return False
+
+        input_selectors = self.get_all_selectors("message-box")
+
+        # Combine all possible selectors we might be waiting for
+        all_wait_selectors = sign_in_selectors + input_selectors
+
+        if all_wait_selectors:
+            combined_selector = ", ".join(all_wait_selectors)
+            try:
+                # Wait up to 2 seconds for either state to resolve
+                await page.locator(combined_selector).first.wait_for(state="visible", timeout=2000)
+            except Exception:
+                pass
+
+        # Now perform the actual check
+        for sel in sign_in_selectors:
             try:
                 if await page.locator(sel).count() > 0:
                     logger.info(f"Login required: found sign-in element '{sel}'")
