@@ -191,13 +191,27 @@ class GenericAdapter:
 
     async def _needs_login(self, page) -> bool:
         """Check if the sign-in element from config exists on the page."""
-        for sel in self.get_all_selectors("sign-in"):
-            try:
-                if await page.locator(sel).count() > 0:
-                    logger.info(f"Login required: found sign-in element '{sel}'")
-                    return True
-            except Exception:
-                pass
+        selectors = self.get_all_selectors("sign-in")
+        if not selectors:
+            return False
+
+        try:
+            # ⚡ Bolt: Use a single comma-separated selector for batched evaluation
+            # to avoid N+1 locator queries.
+            combined_selector = ", ".join(selectors)
+            if await page.locator(combined_selector).count() > 0:
+                logger.info("Login required: found sign-in element")
+                return True
+        except Exception as e:
+            logger.debug(f"Combined selector failed, falling back to sequential: {e}")
+            # Fallback for complex selectors (like text= or xpath=) that don't support comma separation
+            for sel in selectors:
+                try:
+                    if await page.locator(sel).count() > 0:
+                        logger.info(f"Login required: found sign-in element '{sel}'")
+                        return True
+                except Exception:
+                    pass
         return False
 
     async def _wait_for_input(self, page):

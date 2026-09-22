@@ -208,14 +208,21 @@ class LoginHandler:
 
             selectors = success_indicators.get("selectors", [])
             if selectors:
-                for selector in selectors:
-                    try:
-                        count = await page.locator(selector).count()
-                        if count > 0:
-                            logger.info(f"Login success detected: found selector '{selector}'")
-                            return True
-                    except:
-                        pass
+                try:
+                    # ⚡ Bolt: Use a single comma-separated selector for batched evaluation
+                    combined_selector = ", ".join(selectors)
+                    if await page.locator(combined_selector).count() > 0:
+                        logger.info("Login success detected: found matching selector")
+                        return True
+                except Exception:
+                    # Fallback for complex selectors that don't support comma separation
+                    for selector in selectors:
+                        try:
+                            if await page.locator(selector).count() > 0:
+                                logger.info(f"Login success detected: found selector '{selector}'")
+                                return True
+                        except:
+                            pass
 
             return False
 
