@@ -21,3 +21,7 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+
+## 2025-02-15 - [Playwright Batched Locator Evaluation with Mixed Engines]
+**Learning:** In Playwright, evaluating an array of selectors sequentially inside a loop using `await page.locator(sel).count()` causes an N+1 query pattern, resulting in multiple network round-trips over CDP between the Python runner and the browser. While `", ".join(selectors)` optimizes standard CSS selectors, it silently breaks if the array contains Playwright custom engines (like `text=` or `xpath=`), as it attempts to parse the entire string using the first matched engine.
+**Action:** Always batch multiple locators together using Playwright's native `locator.or_()` method (e.g., `loc = loc.or_(page.locator(sel))`) before calling `.count()`. This performs a single aggregate evaluation over CDP while correctly parsing mixed CSS, XPath, and text selector engines.
