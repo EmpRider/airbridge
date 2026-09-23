@@ -208,14 +208,18 @@ class LoginHandler:
 
             selectors = success_indicators.get("selectors", [])
             if selectors:
-                for selector in selectors:
-                    try:
-                        count = await page.locator(selector).count()
-                        if count > 0:
-                            logger.info(f"Login success detected: found selector '{selector}'")
-                            return True
-                    except:
-                        pass
+                # OPTIMIZATION: Batch locators using Playwright's native .or_() method
+                # to reduce N+1 CDP network round trips while safely handling custom pseudo-selectors
+                loc = page.locator(selectors[0])
+                for sel in selectors[1:]:
+                    loc = loc.or_(page.locator(sel))
+
+                try:
+                    if await loc.count() > 0:
+                        logger.info("Login success detected: found one of the success selectors")
+                        return True
+                except Exception as e:
+                    logger.debug(f"Error checking success locators: {e}")
 
             return False
 

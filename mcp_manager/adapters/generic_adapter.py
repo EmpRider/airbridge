@@ -191,13 +191,22 @@ class GenericAdapter:
 
     async def _needs_login(self, page) -> bool:
         """Check if the sign-in element from config exists on the page."""
-        for sel in self.get_all_selectors("sign-in"):
-            try:
-                if await page.locator(sel).count() > 0:
-                    logger.info(f"Login required: found sign-in element '{sel}'")
-                    return True
-            except Exception:
-                pass
+        selectors = self.get_all_selectors("sign-in")
+        if not selectors:
+            return False
+
+        # OPTIMIZATION: Batch locators using Playwright's native .or_() method
+        # to reduce N+1 CDP network round trips while safely handling custom pseudo-selectors (e.g. text=)
+        loc = page.locator(selectors[0])
+        for sel in selectors[1:]:
+            loc = loc.or_(page.locator(sel))
+
+        try:
+            if await loc.count() > 0:
+                logger.info("Login required: found sign-in element")
+                return True
+        except Exception as e:
+            logger.debug(f"Error checking sign-in locators: {e}")
         return False
 
     async def _wait_for_input(self, page):
