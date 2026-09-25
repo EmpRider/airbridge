@@ -208,14 +208,22 @@ class LoginHandler:
 
             selectors = success_indicators.get("selectors", [])
             if selectors:
-                for selector in selectors:
-                    try:
-                        count = await page.locator(selector).count()
-                        if count > 0:
-                            logger.info(f"Login success detected: found selector '{selector}'")
-                            return True
-                    except:
-                        pass
+                try:
+                    batched_loc = page.locator(selectors[0])
+                    for sel in selectors[1:]:
+                        batched_loc = batched_loc.or_(page.locator(sel))
+                    if await batched_loc.count() > 0:
+                        logger.info("Login success detected: found success selector")
+                        return True
+                except Exception as e:
+                    logger.debug(f"Batched success check failed ({e}), falling back to sequential")
+                    for selector in selectors:
+                        try:
+                            if await page.locator(selector).count() > 0:
+                                logger.info(f"Login success detected: found selector '{selector}'")
+                                return True
+                        except:
+                            pass
 
             return False
 

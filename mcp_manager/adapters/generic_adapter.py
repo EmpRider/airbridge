@@ -191,13 +191,27 @@ class GenericAdapter:
 
     async def _needs_login(self, page) -> bool:
         """Check if the sign-in element from config exists on the page."""
-        for sel in self.get_all_selectors("sign-in"):
-            try:
-                if await page.locator(sel).count() > 0:
-                    logger.info(f"Login required: found sign-in element '{sel}'")
-                    return True
-            except Exception:
-                pass
+        selectors = self.get_all_selectors("sign-in")
+        if not selectors:
+            return False
+
+        # OPTIMIZATION: Batch multiple selectors into a single CDP round-trip
+        try:
+            batched_loc = page.locator(selectors[0])
+            for sel in selectors[1:]:
+                batched_loc = batched_loc.or_(page.locator(sel))
+            if await batched_loc.count() > 0:
+                logger.info("Login required: found sign-in element")
+                return True
+        except Exception as e:
+            logger.debug(f"Batched login check failed ({e}), falling back to sequential")
+            for sel in selectors:
+                try:
+                    if await page.locator(sel).count() > 0:
+                        logger.info(f"Login required: found sign-in element '{sel}'")
+                        return True
+                except Exception:
+                    pass
         return False
 
     async def _wait_for_input(self, page):
