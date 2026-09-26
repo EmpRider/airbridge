@@ -208,14 +208,26 @@ class LoginHandler:
 
             selectors = success_indicators.get("selectors", [])
             if selectors:
-                for selector in selectors:
-                    try:
-                        count = await page.locator(selector).count()
-                        if count > 0:
-                            logger.info(f"Login success detected: found selector '{selector}'")
-                            return True
-                    except:
-                        pass
+                try:
+                    # OPTIMIZATION: Batch multiple success indicators into a single locator
+                    # using Playwright's native .or_() method to avoid N+1 CDP queries.
+                    batched_locator = page.locator(selectors[0])
+                    for sel in selectors[1:]:
+                        batched_locator = batched_locator.or_(page.locator(sel))
+
+                    if await batched_locator.count() > 0:
+                        logger.info(f"Login success detected: found selector (batched evaluation)")
+                        return True
+                except Exception as e:
+                    logger.debug(f"Batched login success evaluation failed, falling back to sequential: {e}")
+                    for selector in selectors:
+                        try:
+                            count = await page.locator(selector).count()
+                            if count > 0:
+                                logger.info(f"Login success detected: found selector '{selector}'")
+                                return True
+                        except:
+                            pass
 
             return False
 
