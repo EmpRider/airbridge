@@ -21,3 +21,6 @@
 ## 2025-02-14 - [Fast-Path Surrogate Sanitization]
 **Learning:** Text sanitization functions that unconditionally use `.encode(errors="surrogatepass").decode(errors="replace")` incur significant performance penalties (up to 3x slower) even on clean text, which is the 99% use case. In applications doing heavy text processing (like simulated human typing character-by-character), this becomes a CPU bottleneck.
 **Action:** Always implement a fast-path using `try: text.encode('utf-8')` to validate if text is already clean before falling back to expensive surrogate replacement algorithms.
+## 2025-02-15 - [Playwright Batched Selector Queries]
+**Learning:** Sequential evaluation of multiple fallback selectors using `await page.locator(sel).count()` inside a loop causes an N+1 query pattern over CDP, introducing significant latency.
+**Action:** Always batch multiple Playwright locators using `locator.or_()` (e.g., `loc = loc.or_(page.locator(sel))`) for a single aggregate evaluation. Wrap this optimization in a `try...except` block with a sequential fallback to handle syntactically invalid selectors robustly.
